@@ -1,0 +1,36 @@
+# =============================================================================
+# DATABASE NODES VARIABLES
+# =============================================================================
+# Áp dụng cho nodes trong group [db_nodes]
+# =============================================================================
+
+---
+# Node identification
+node_role: database
+node_description: "Database Node - PostgreSQL"
+
+# PostgreSQL settings
+postgres_version: "16"
+postgres_port: 5432
+postgres_max_connections: 200
+postgres_shared_buffers: "256MB"
+
+# Replication settings
+postgres_replication_enabled: true
+postgres_replication_user: "replicator"
+# postgres_replication_password: "{{ vault_postgres_replication_password }}"
+
+# Backup settings
+postgres_backup_enabled: true
+postgres_backup_schedule: "0 2 * * *"  # Daily at 2 AM
+postgres_backup_retention_days: 7
+
+# Firewall - PostgreSQL chỉ từ WireGuard network
+ufw_db_rules:
+  - { port: 5432, proto: "tcp", from: "10.10.0.0/24", comment: "PostgreSQL from WireGuard" }
+  - { port: 22, proto: "tcp", from: "10.10.0.0/24", comment: "SSH from WireGuard" }
+
+# Resource allocation
+db_resources:
+  memory_limit: "2G"
+  cpu_limit: "2"

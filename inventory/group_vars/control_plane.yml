@@ -1,0 +1,30 @@
+# =============================================================================
+# CONTROL PLANE VARIABLES
+# =============================================================================
+# Áp dụng cho các nodes trong group [control_plane]
+# =============================================================================
+
+---
+# Node identification
+node_role: control_plane
+node_description: "WireGuard Hub - Control Plane"
+
+# WireGuard Hub settings
+wg_is_hub: true
+wg_listen_port: 51820
+
+# Control plane services
+control_plane_services:
+  - wireguard    # VPN mesh management
+  # - consul     # Service discovery (future)
+  # - vault      # Secrets management (future)
+
+# Firewall rules - Control plane cần expose WireGuard port
+ufw_control_plane_rules:
+  - { port: 51820, proto: "udp", from: "any", comment: "WireGuard VPN" }
+  - { port: 22, proto: "tcp", from: "any", comment: "SSH (tạm thời)" }
+
+# Resource limits (control plane thường nhẹ)
+control_plane_resources:
+  memory_limit: "512M"
+  cpu_limit: "0.5"

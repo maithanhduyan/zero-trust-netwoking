@@ -3,8 +3,25 @@
 /tmp/
 ansible_facts_cache/
 
-# Secrets - KHÔNG BAO GIỜ COMMIT
+# =============================================================================
+# SENSITIVE FILES - KHÔNG BAO GIỜ COMMIT
+# =============================================================================
+
+# Inventory với IP thực
+inventory/hosts.ini
+!inventory/hosts.ini.example
+
+# Group vars với secrets
+inventory/group_vars/all.yml
+!inventory/group_vars/all.yml.example
+
+# Host-specific variables
+inventory/host_vars/*.yml
+!inventory/host_vars/*.yml.example
+
+# Vault files
 *.vault
+*.vault.yml
 **/secrets.yml
 **/vault.yml
 **/*_secret*
@@ -12,9 +29,16 @@ ansible_facts_cache/
 .vault_pass
 vault_password_file
 
-# SSH Keys
-*.pem
+# WireGuard keys (nếu có trong repo)
 *.key
+wg_*.key
+private.key
+public.key
+
+# =============================================================================
+# SSH Keys
+# =============================================================================
+*.pem
 id_rsa*
 id_ed25519*
 

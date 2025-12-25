@@ -29,50 +29,91 @@ Build a Zero Trust Network using Ansible, WireGuard, and Docker.
 ```
 zero-trust-networking/
 ├── inventory/
-│   ├── hosts.ini           # Inventory với WireGuard IPs
+│   ├── hosts.ini.example   # Template (commit lên git)
+│   ├── hosts.ini           # IP thực (⚠️ KHÔNG COMMIT)
 │   └── group_vars/
-│       └── all.yml         # Variables (encrypted)
+│       ├── all.yml.example # Template (commit lên git)
+│       └── all.yml         # Secrets (⚠️ KHÔNG COMMIT)
 ├── roles/
 │   ├── common/             # Base packages & config
-│   ├── wireguard/          # Self-hosted VPN (không phụ thuộc bên thứ 3)
+│   ├── wireguard/          # Self-hosted VPN
 │   ├── security/           # UFW, Fail2ban
 │   ├── docker/             # Docker Engine
 │   ├── postgres-ha/        # PostgreSQL HA
 │   └── odoo-app/           # Odoo Application
 ├── playbooks/
 │   ├── site.yml            # Master playbook
-│   ├── setup-local.yml     # Local machine setup
-│   └── setup-wireguard.yml # WireGuard VPN setup
-└── .github/workflows/
-    └── validate.yml        # CI/CD validation
+│   ├── setup-control-plane.yml  # Setup Hub
+│   └── setup-worker-node.yml    # Setup Worker
+└── scripts/
+    ├── init-config.sh      # Tạo config từ templates
+    └── add-peer-to-hub.sh  # Thêm peer vào mesh
 ```
+
+## 🔐 Security Notes
+
+**⚠️ QUAN TRỌNG:** Các file sau chứa thông tin nhạy cảm, **KHÔNG COMMIT lên Git:**
+- `inventory/hosts.ini` - Public IPs, WireGuard keys
+- `inventory/group_vars/all.yml` - Hub configuration
+
+Chỉ commit các file `.example` làm template.
 
 ## 🚀 Quick Start
 
-### 1. Install prerequisites
+### Hub Server (Lần đầu)
 
 ```bash
+# 1. Clone repo
+git clone <your-repo-url> /home/zero-trust-networking
+cd /home/zero-trust-networking
+
+# 2. Tạo config từ templates
+chmod +x scripts/*.sh
+./scripts/init-config.sh
+
+# 3. Chỉnh sửa config với IP thực
+vim inventory/hosts.ini
+vim inventory/group_vars/all.yml
+
+# 4. Cài đặt prerequisites
 chmod +x install_zero_trust_networking.sh
 ./install_zero_trust_networking.sh
-```
 
-### 2. Setup WireGuard VPN
-
-```bash
+# 3. Setup WireGuard Hub
 ansible-playbook playbooks/setup-wireguard.yml
 ```
 
-### 3. Check local setup
+### Thêm VPS mới vào mesh (1 lệnh)
 
 ```bash
-ansible-playbook playbooks/setup-local.yml
+# SSH vào VPS mới và chạy:
+curl -sSL https://raw.githubusercontent.com/YOUR_REPO/bootstrap.sh | sudo bash -s -- 10.10.0.10 node-name
+
+# Hoặc sau khi clone repo:
+sudo ./bootstrap.sh 10.10.0.10 node-name
 ```
 
-### 4. Deploy to all nodes
+Script sẽ tự động:
+- ✅ Cài Ansible, Git
+- ✅ Clone project
+- ✅ Setup WireGuard
+- ✅ In ra lệnh để chạy trên Hub
+
+### Trên Hub Server (hoàn tất kết nối)
 
 ```bash
-ansible-playbook playbooks/site.yml
+# Chạy lệnh mà bootstrap.sh in ra:
+./scripts/add-peer-to-hub.sh "node-name" "PUBLIC_KEY" "10.10.0.10"
 ```
+
+## 📋 Playbooks
+
+| Playbook | Mục đích |
+|----------|----------|
+| `setup-wireguard.yml` | Setup WireGuard Hub |
+| `add-wireguard-peer.yml` | Thêm node mới vào mesh |
+| `setup-local.yml` | Kiểm tra trạng thái |
+| `site.yml` | Deploy toàn bộ infrastructure |
 
 ## 🔐 Security Notes
 

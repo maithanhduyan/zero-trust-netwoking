@@ -1,0 +1,70 @@
+# =============================================================================
+# GLOBAL VARIABLES - TEMPLATE
+# =============================================================================
+# Copy file này thành all.yml và điền thông tin thực:
+#   cp all.yml.example all.yml
+#
+# ⚠️  KHÔNG COMMIT all.yml LÊN GIT!
+# =============================================================================
+
+---
+# -----------------------------------------------------------------------------
+# SYSTEM
+# -----------------------------------------------------------------------------
+timezone: "Asia/Ho_Chi_Minh"
+locale: "en_US.UTF-8"
+
+# -----------------------------------------------------------------------------
+# SSH SECURITY
+# -----------------------------------------------------------------------------
+ssh_port: 22
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+
+# -----------------------------------------------------------------------------
+# WIREGUARD VPN
+# -----------------------------------------------------------------------------
+wg_network: "10.10.0.0/24"
+wg_port: 51820
+wg_persistent_keepalive: 25
+
+# Hub configuration - CẬP NHẬT SAU KHI SETUP
+wg_hub_endpoint: "YOUR_HUB_PUBLIC_IP"
+wg_hub_public_key: "YOUR_HUB_PUBLIC_KEY"
+
+# -----------------------------------------------------------------------------
+# DOCKER
+# -----------------------------------------------------------------------------
+docker_edition: "ce"
+docker_compose_version: "v2.24.0"
+docker_users:
+  - "{{ ansible_user }}"
+
+# -----------------------------------------------------------------------------
+# FIREWALL (UFW)
+# -----------------------------------------------------------------------------
+ufw_default_incoming: "deny"
+ufw_default_outgoing: "allow"
+ufw_logging: "on"
+
+ufw_allowed_ports:
+  - { port: 22, proto: "tcp", from: "any" }
+  - { port: 51820, proto: "udp", from: "any" }
+
+# -----------------------------------------------------------------------------
+# COMMON PACKAGES
+# -----------------------------------------------------------------------------
+common_packages:
+  - curl
+  - wget
+  - vim
+  - htop
+  - iotop
+  - net-tools
+  - dnsutils
+  - jq
+  - tree
+  - ncdu
+  - tmux
+  - fail2ban
+  - unattended-upgrades

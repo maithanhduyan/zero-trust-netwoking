@@ -1,0 +1,35 @@
+# =============================================================================
+# WORKER NODES VARIABLES
+# =============================================================================
+# Áp dụng cho tất cả nodes trong group [worker_nodes]
+# =============================================================================
+
+---
+# Node identification
+node_description: "Worker Node - Runs workloads"
+
+# WireGuard client settings
+wg_is_hub: false
+wg_persistent_keepalive: 25
+
+# Hub connection info
+wg_hub_address: "10.10.0.1"
+wg_hub_endpoint: "{{ hostvars['hub-server']['ansible_host'] | default('5.104.82.252') }}"
+wg_hub_port: 51820
+wg_hub_public_key: "{{ hostvars['hub-server']['wg_public_key'] | default('9c7Sd43PyenG33LjKho0TKykNCJbqgXwhJHRF0jloEs=') }}"
+
+# Docker settings for worker nodes
+docker_enabled: true
+docker_storage_driver: overlay2
+
+# Firewall rules - Worker nodes chỉ cho phép traffic từ WireGuard network
+ufw_worker_rules:
+  - { port: 22, proto: "tcp", from: "10.10.0.0/24", comment: "SSH from WireGuard only" }
+  - { port: 51820, proto: "udp", from: "any", comment: "WireGuard VPN" }
+
+# Common packages for all workers
+worker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-compose-plugin
