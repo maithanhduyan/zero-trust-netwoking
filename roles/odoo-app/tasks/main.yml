@@ -1,9 +1,0 @@
----
-# =============================================================================
-# ODOO-APP ROLE - Tasks
-# =============================================================================
-# TODO: Implement Odoo application deployment
-
-- name: Odoo App placeholder
-  debug:
-    msg: "Odoo App role - To be implemented"
