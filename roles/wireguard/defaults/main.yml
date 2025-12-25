@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# WIREGUARD ROLE - Default Variables
+# =============================================================================
+
+# WireGuard interface name
+wg_interface: wg0
+
+# WireGuard port (UDP)
+wg_port: 51820
+
+# Network prefix for WireGuard subnet
+wg_network_prefix: 24
+
+# WireGuard network (ví dụ: 10.10.0.0/24)
+wg_network: "10.10.0.0/24"
+
+# Persistent keepalive (seconds) - giữ kết nối qua NAT
+wg_persistent_keepalive: 25
+
+# DNS server cho WireGuard clients (optional)
+# wg_dns: "1.1.1.1"
+
+# Có phải là hub server không (sẽ enable NAT masquerade)
+wg_is_hub: false

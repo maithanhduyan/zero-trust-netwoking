@@ -1,0 +1,57 @@
+# Ansible
+*.retry
+/tmp/
+ansible_facts_cache/
+
+# Secrets - KHÔNG BAO GIỜ COMMIT
+*.vault
+**/secrets.yml
+**/vault.yml
+**/*_secret*
+**/*_password*
+.vault_pass
+vault_password_file
+
+# SSH Keys
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Environment
+.env
+.env.*
+*.env
+
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.python-version
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform (nếu dùng)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Backup files
+*.bak
+*.backup
+*.orig

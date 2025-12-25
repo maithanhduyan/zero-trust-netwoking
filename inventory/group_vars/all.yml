@@ -1,0 +1,85 @@
+---
+# =============================================================================
+# GLOBAL VARIABLES - Áp dụng cho tất cả hosts
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# SYSTEM
+# -----------------------------------------------------------------------------
+timezone: "Asia/Ho_Chi_Minh"
+locale: "en_US.UTF-8"
+
+# -----------------------------------------------------------------------------
+# SSH SECURITY
+# -----------------------------------------------------------------------------
+ssh_port: 22
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+
+# -----------------------------------------------------------------------------
+# WIREGUARD VPN (Tự chủ 100%)
+# -----------------------------------------------------------------------------
+wg_network: "10.10.0.0/24"
+wg_port: 51820
+wg_persistent_keepalive: 25
+
+# Danh sách tất cả peers trong mạng WireGuard
+# Public key sẽ được generate tự động, bạn cần update sau khi chạy lần đầu
+wg_peers: []
+  # - name: hub-server
+  #   address: "10.10.0.1"
+  #   public_key: "PUBLIC_KEY_HERE"
+  #   endpoint: "your-public-ip-or-domain"  # Chỉ cần cho hub
+  #   port: 51820
+  #   persistent_keepalive: 25
+  #
+  # - name: db-primary
+  #   address: "10.10.0.10"
+  #   public_key: "PUBLIC_KEY_HERE"
+  #   persistent_keepalive: 25
+  #
+  # - name: app-1
+  #   address: "10.10.0.20"
+  #   public_key: "PUBLIC_KEY_HERE"
+  #   persistent_keepalive: 25
+
+# -----------------------------------------------------------------------------
+# DOCKER
+# -----------------------------------------------------------------------------
+docker_edition: "ce"
+docker_compose_version: "v2.24.0"
+docker_users:
+  - "{{ ansible_user }}"
+
+# -----------------------------------------------------------------------------
+# FIREWALL (UFW)
+# -----------------------------------------------------------------------------
+ufw_default_incoming: "deny"
+ufw_default_outgoing: "allow"
+ufw_logging: "on"
+
+# Allowed ports
+ufw_allowed_ports:
+  - { port: 22, proto: "tcp", from: "any" }                   # SSH (tạm thời)
+  - { port: 51820, proto: "udp", from: "any" }                # WireGuard
+  # Sau khi WireGuard hoạt động, restrict lại:
+  # - { port: 22, proto: "tcp", from: "10.10.0.0/24" }        # SSH chỉ từ WireGuard
+  # - { port: 5432, proto: "tcp", from: "10.10.0.0/24" }      # PostgreSQL từ WireGuard
+
+# -----------------------------------------------------------------------------
+# COMMON PACKAGES
+# -----------------------------------------------------------------------------
+common_packages:
+  - curl
+  - wget
+  - vim
+  - htop
+  - iotop
+  - net-tools
+  - dnsutils
+  - jq
+  - tree
+  - ncdu
+  - tmux
+  - fail2ban
+  - unattended-upgrades

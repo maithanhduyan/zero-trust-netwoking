@@ -1,0 +1,38 @@
+---
+# =============================================================================
+# MASTER PLAYBOOK - Chạy toàn bộ hệ thống
+# =============================================================================
+# 
+# Usage:
+#   ansible-playbook playbooks/site.yml
+#   ansible-playbook playbooks/site.yml --limit db_nodes
+#   ansible-playbook playbooks/site.yml --tags "security,wireguard"
+#
+# =============================================================================
+
+- name: Apply common configuration to all hosts
+  hosts: all_nodes
+  become: yes
+  roles:
+    - role: common
+      tags: [common, base]
+    - role: security
+      tags: [security, hardening]
+    - role: wireguard
+      tags: [wireguard, vpn, zerotrust]
+    - role: docker
+      tags: [docker, container]
+
+- name: Configure Database nodes
+  hosts: db_nodes
+  become: yes
+  roles:
+    - role: postgres-ha
+      tags: [database, postgres]
+
+- name: Configure Application nodes
+  hosts: app_nodes
+  become: yes
+  roles:
+    - role: odoo-app
+      tags: [application, odoo]

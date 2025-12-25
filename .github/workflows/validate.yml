@@ -1,0 +1,37 @@
+name: Validate Ansible
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install ansible ansible-lint yamllint
+
+      - name: Run yamllint
+        run: |
+          yamllint -d relaxed .
+        continue-on-error: true
+
+      - name: Run ansible-lint
+        run: |
+          ansible-lint playbooks/ || true
+
+      - name: Syntax check
+        run: |
+          ansible-playbook playbooks/site.yml --syntax-check
+          ansible-playbook playbooks/setup-local.yml --syntax-check

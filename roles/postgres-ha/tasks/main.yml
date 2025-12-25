@@ -1,0 +1,10 @@
+---
+# =============================================================================
+# POSTGRES-HA ROLE - Tasks
+# =============================================================================
+# TODO: Implement PostgreSQL HA with Patroni
+# Reference: P2P đồng bộ PostgreSQL Docker
+
+- name: PostgreSQL HA placeholder
+  debug:
+    msg: "PostgreSQL HA role - To be implemented"

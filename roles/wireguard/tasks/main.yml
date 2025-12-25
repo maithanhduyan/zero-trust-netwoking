@@ -1,0 +1,122 @@
+---
+# =============================================================================
+# WIREGUARD ROLE - Tasks
+# =============================================================================
+# Self-hosted WireGuard VPN - Không phụ thuộc bên thứ 3
+# =============================================================================
+
+- name: Install WireGuard
+  apt:
+    name:
+      - wireguard
+      - wireguard-tools
+    state: present
+    update_cache: yes
+  tags: [install]
+
+- name: Enable IP forwarding
+  sysctl:
+    name: "{{ item }}"
+    value: "1"
+    sysctl_file: /etc/sysctl.d/99-wireguard.conf
+    reload: yes
+  loop:
+    - net.ipv4.ip_forward
+    - net.ipv6.conf.all.forwarding
+  tags: [sysctl]
+
+- name: Create WireGuard directory
+  file:
+    path: /etc/wireguard
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+  tags: [config]
+
+- name: Check if private key exists
+  stat:
+    path: /etc/wireguard/private.key
+  register: wg_private_key_file
+  tags: [keys]
+
+- name: Generate WireGuard private key
+  shell: wg genkey > /etc/wireguard/private.key
+  args:
+    creates: /etc/wireguard/private.key
+  when: not wg_private_key_file.stat.exists
+  tags: [keys]
+
+- name: Set private key permissions
+  file:
+    path: /etc/wireguard/private.key
+    mode: '0600'
+    owner: root
+    group: root
+  tags: [keys]
+
+- name: Generate WireGuard public key
+  shell: cat /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key
+  args:
+    creates: /etc/wireguard/public.key
+  tags: [keys]
+
+- name: Read private key
+  slurp:
+    src: /etc/wireguard/private.key
+  register: wg_private_key
+  tags: [config]
+
+- name: Read public key
+  slurp:
+    src: /etc/wireguard/public.key
+  register: wg_public_key
+  tags: [config]
+
+- name: Set WireGuard key facts
+  set_fact:
+    wireguard_private_key: "{{ wg_private_key.content | b64decode | trim }}"
+    wireguard_public_key: "{{ wg_public_key.content | b64decode | trim }}"
+  tags: [config]
+
+- name: Display node's public key (for adding to other peers)
+  debug:
+    msg: |
+      ╔══════════════════════════════════════════════════════════════════════╗
+      ║  WIREGUARD PUBLIC KEY - {{ inventory_hostname }}
+      ╠══════════════════════════════════════════════════════════════════════╣
+      ║  Public Key: {{ wireguard_public_key }}
+      ║  WireGuard IP: {{ wg_address }}
+      ║  Endpoint: {{ ansible_host }}:{{ wg_port }}
+      ╚══════════════════════════════════════════════════════════════════════╝
+  tags: [config, info]
+
+- name: Create WireGuard configuration
+  template:
+    src: wg0.conf.j2
+    dest: /etc/wireguard/wg0.conf
+    mode: '0600'
+    owner: root
+    group: root
+  notify: restart wireguard
+  tags: [config]
+
+- name: Enable and start WireGuard
+  systemd:
+    name: wg-quick@wg0
+    enabled: yes
+    state: started
+  tags: [service]
+
+- name: Check WireGuard status
+  command: wg show wg0
+  register: wg_status
+  changed_when: false
+  ignore_errors: yes
+  tags: [status]
+
+- name: Display WireGuard status
+  debug:
+    msg: "{{ wg_status.stdout_lines }}"
+  when: wg_status.rc == 0
+  tags: [status]
