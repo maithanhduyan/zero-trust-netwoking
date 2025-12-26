@@ -1,0 +1,5 @@
+# Cấu hình Site
+:80 {
+    # Chuyển tiếp request vào máy host tại cổng 8000
+    reverse_proxy host.docker.internal:8000
+}
