@@ -1,0 +1,101 @@
+---
+# =============================================================================
+# LOCAL SETUP PLAYBOOK - Cấu hình máy hiện tại
+# =============================================================================
+#
+# Usage:
+#   ansible-playbook playbooks/setup-local.yml
+#
+# =============================================================================
+
+- name: Setup local machine for Zero Trust Networking
+  hosts: localhost
+  connection: local
+  become: yes
+
+  tasks:
+    - name: Display system information
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║              SYSTEM INFORMATION                              ║
+          ╠══════════════════════════════════════════════════════════════╣
+          ║  OS:       {{ ansible_distribution }} {{ ansible_distribution_version }}
+          ║  Hostname: {{ ansible_hostname }}
+          ║  IP:       {{ ansible_default_ipv4.address | default('N/A') }}
+          ║  User:     {{ ansible_user_id }}
+          ╚══════════════════════════════════════════════════════════════╝
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install essential packages
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - wget
+        - git
+        - vim
+        - htop
+        - jq
+        - tree
+        - net-tools
+
+    - name: Check if Docker is installed
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check if WireGuard is installed
+      command: wg --version
+      register: wireguard_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check if Ansible is installed
+      command: ansible --version
+      register: ansible_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Display installation status
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║              INSTALLATION STATUS                             ║
+          ╠══════════════════════════════════════════════════════════════╣
+          ║  Ansible:   {{ '✓ ' + ansible_check.stdout_lines[0] if ansible_check.rc == 0 else '✗ Not installed' }}
+          ║  Docker:    {{ '✓ ' + docker_check.stdout if docker_check.rc == 0 else '✗ Not installed' }}
+          ║  WireGuard: {{ '✓ Installed' if wireguard_check.rc == 0 else '✗ Not installed' }}
+          ╚══════════════════════════════════════════════════════════════╝
+
+    - name: Check WireGuard interface
+      command: wg show wg0
+      register: wg_status
+      ignore_errors: yes
+      changed_when: false
+      when: wireguard_check.rc == 0
+
+    - name: Display WireGuard status
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║              WIREGUARD VPN STATUS                            ║
+          ╠══════════════════════════════════════════════════════════════╣
+          {{ wg_status.stdout | default('Not configured') | indent(2) }}
+          ╚══════════════════════════════════════════════════════════════╝
+      when: wireguard_check.rc == 0 and wg_status.rc == 0
+
+    - name: Display WireGuard not configured message
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║  WireGuard chưa được cấu hình!                               ║
+          ║  Chạy: ansible-playbook playbooks/setup-wireguard.yml        ║
+          ╚══════════════════════════════════════════════════════════════╝
+      when: wireguard_check.rc != 0 or (wg_status is defined and wg_status.rc != 0)
