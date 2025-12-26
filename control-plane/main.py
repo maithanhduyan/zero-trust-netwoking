@@ -18,9 +18,14 @@ app.include_router(agent.router, prefix="/api/v1/agent", tags=["Agent"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 
 # 3. Thêm endpoint kiểm tra sức khỏe đơn giản
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to the Zero Trust Control Plane API"}
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "control-plane"}
 
+# 4. Chạy ứng dụng với Uvicorn
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
