@@ -3,6 +3,7 @@
 """
 Zero Trust Agent Daemon
 Runs on each VPS to sync configuration from Control Plane
+Supports WebSocket for real-time updates with HTTP polling fallback
 """
 
 import os
@@ -11,11 +12,14 @@ import time
 import signal
 import logging
 import argparse
+import asyncio
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
 from client import ControlPlaneClient
+from websocket_client import HybridClient
 from wireguard.manager import WireGuardManager
 from wireguard.config_builder import WireGuardConfigBuilder
 from firewall.iptables import IPTablesManager
@@ -52,16 +56,31 @@ class ZeroTrustAgent:
         role: str,
         control_plane_url: str,
         sync_interval: int = 60,
-        config_dir: str = "/etc/wireguard"
+        config_dir: str = "/etc/wireguard",
+        use_websocket: bool = True
     ):
         self.hostname = hostname
         self.role = role
         self.sync_interval = sync_interval
         self.config_dir = Path(config_dir)
         self.running = True
+        self.use_websocket = use_websocket
+        self.control_plane_url = control_plane_url
 
-        # Initialize components
+        # Initialize HTTP client (always needed for registration)
         self.client = ControlPlaneClient(control_plane_url)
+
+        # Initialize WebSocket hybrid client if enabled
+        self.ws_client: Optional[HybridClient] = None
+        if use_websocket:
+            ws_url = control_plane_url.replace("http://", "ws://").replace("https://", "wss://")
+            ws_url = f"{ws_url}/api/v1/ws/agent"
+            self.ws_client = HybridClient(
+                ws_url=ws_url,
+                http_client=self.client,
+                poll_interval=sync_interval
+            )
+
         self.wg_manager = WireGuardManager(interface="wg0", config_dir=config_dir)
         self.wg_builder = WireGuardConfigBuilder()
         self.firewall = IPTablesManager(interface="wg0")
@@ -345,6 +364,11 @@ class ZeroTrustAgent:
                     logger.error(f"Error checking status: {e}")
                     time.sleep(30)
 
+        # Start WebSocket client if enabled
+        if self.use_websocket and self.ws_client:
+            logger.info("Starting WebSocket client for real-time updates")
+            self._start_websocket()
+
         # Main loop
         last_sync = 0
         heartbeat_interval = 30
@@ -353,10 +377,11 @@ class ZeroTrustAgent:
         while self.running:
             now = time.time()
 
-            # Sync config
-            if now - last_sync >= self.sync_interval:
-                self.sync_config()
-                last_sync = now
+            # Sync config (only if not using WebSocket or as fallback)
+            if not self.use_websocket or not self.ws_client or not self.ws_client.is_connected():
+                if now - last_sync >= self.sync_interval:
+                    self.sync_config()
+                    last_sync = now
 
             # Send heartbeat
             if now - last_heartbeat >= heartbeat_interval:
@@ -370,9 +395,67 @@ class ZeroTrustAgent:
         logger.info("Agent shutting down")
         self.cleanup()
 
+    def _start_websocket(self):
+        """Start WebSocket client in background thread"""
+        def ws_thread():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            # Register message handlers
+            self.ws_client.register_handler("config_update", self._handle_config_update)
+            self.ws_client.register_handler("peer_update", self._handle_peer_update)
+            self.ws_client.register_handler("policy_update", self._handle_policy_update)
+            self.ws_client.register_handler("node_suspended", self._handle_suspension)
+
+            try:
+                loop.run_until_complete(self.ws_client.start())
+            except Exception as e:
+                logger.error(f"WebSocket error: {e}")
+            finally:
+                loop.close()
+
+        thread = threading.Thread(target=ws_thread, daemon=True)
+        thread.start()
+        logger.info("WebSocket client started in background thread")
+
+    def _handle_config_update(self, message: dict):
+        """Handle config update from WebSocket"""
+        logger.info("Received config update via WebSocket")
+        payload = message.get("payload", {})
+        if payload:
+            self._apply_config(payload)
+            self.current_config_version = payload.get("config_version", self.current_config_version)
+
+    def _handle_peer_update(self, message: dict):
+        """Handle peer update from WebSocket"""
+        logger.info("Received peer update via WebSocket")
+        payload = message.get("payload", {})
+        peers = payload.get("peers", [])
+        if peers:
+            self.wg_manager.update_peers(peers)
+
+    def _handle_policy_update(self, message: dict):
+        """Handle policy update from WebSocket"""
+        logger.info("Received policy update via WebSocket")
+        payload = message.get("payload", {})
+        acl_rules = payload.get("acl_rules", [])
+        if acl_rules:
+            self.firewall.apply_rules(acl_rules)
+
+    def _handle_suspension(self, message: dict):
+        """Handle node suspension from WebSocket"""
+        logger.warning("Node has been suspended by Control Plane!")
+        reason = message.get("payload", {}).get("reason", "Unknown")
+        logger.warning(f"Suspension reason: {reason}")
+        # Could trigger immediate shutdown or enter degraded mode
+        self.running = False
+
     def cleanup(self):
         """Cleanup on shutdown"""
         logger.info("Cleaning up...")
+        # Stop WebSocket client
+        if self.ws_client:
+            asyncio.run(self.ws_client.stop())
         # Optionally bring down WireGuard
         # self.wg_manager.down()
 
@@ -384,6 +467,7 @@ def main():
     parser.add_argument("--control-plane", default="https://hub.example.com", help="Control Plane URL")
     parser.add_argument("--sync-interval", type=int, default=60, help="Config sync interval in seconds")
     parser.add_argument("--config-dir", default="/etc/wireguard", help="WireGuard config directory")
+    parser.add_argument("--no-websocket", action="store_true", help="Disable WebSocket, use HTTP polling only")
 
     args = parser.parse_args()
 
@@ -392,7 +476,8 @@ def main():
         role=args.role,
         control_plane_url=args.control_plane,
         sync_interval=args.sync_interval,
-        config_dir=args.config_dir
+        config_dir=args.config_dir,
+        use_websocket=not args.no_websocket
     )
 
     agent.run()

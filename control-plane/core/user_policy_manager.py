@@ -679,6 +679,58 @@ class UserPolicyManager:
 
         return True  # All conditions passed
 
+    def get_user_effective_policies(
+        self,
+        db: Session,
+        user_id: str,
+        resource_type: Optional[str] = None
+    ) -> List[UserAccessPolicy]:
+        """
+        Get all effective policies for a user (direct + from group memberships)
+
+        Returns policies sorted by priority.
+        """
+        user = self.get_user(db, user_id)
+        if not user:
+            return []
+
+        # Get user's groups
+        user_groups = self.get_user_groups(db, user_id)
+        group_ids = [g.id for g in user_groups]
+
+        now = datetime.utcnow()
+
+        # Query for all applicable policies
+        query = db.query(UserAccessPolicy).filter(
+            and_(
+                UserAccessPolicy.enabled == True,
+                or_(
+                    UserAccessPolicy.valid_from.is_(None),
+                    UserAccessPolicy.valid_from <= now
+                ),
+                or_(
+                    UserAccessPolicy.valid_until.is_(None),
+                    UserAccessPolicy.valid_until >= now
+                ),
+                or_(
+                    UserAccessPolicy.subject_type == "all",
+                    and_(
+                        UserAccessPolicy.subject_type == "user",
+                        UserAccessPolicy.subject_id == user.id
+                    ),
+                    and_(
+                        UserAccessPolicy.subject_type == "group",
+                        UserAccessPolicy.subject_id.in_(group_ids) if group_ids else False
+                    )
+                )
+            )
+        )
+
+        if resource_type:
+            query = query.filter(UserAccessPolicy.resource_type == resource_type)
+
+        return query.order_by(UserAccessPolicy.priority).all()
+
 
 # Singleton instance
 user_policy_manager = UserPolicyManager()

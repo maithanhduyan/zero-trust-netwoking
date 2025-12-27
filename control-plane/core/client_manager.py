@@ -19,6 +19,7 @@ from database.models import ClientDevice, NodeStatus, DeviceType, TunnelMode, IP
 from config import settings
 from .events import publish
 from .domain_events import EventTypes, client_device_created_payload, client_device_status_changed_payload
+from .user_policy_manager import UserPolicyManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class ClientManager:
         self.hub_public_key = settings.HUB_PUBLIC_KEY
         self.hub_endpoint = settings.HUB_ENDPOINT
         self.dns_servers = settings.DNS_SERVERS
+        self.policy_manager = UserPolicyManager()
 
     def generate_wireguard_keypair(self) -> Tuple[str, str]:
         """
@@ -199,9 +201,12 @@ class ClientManager:
 
         return device
 
-    def generate_wireguard_config(self, device: ClientDevice) -> str:
+    def generate_wireguard_config(self, device: ClientDevice, db: Session = None) -> str:
         """
         Generate complete WireGuard config file content for a client device
+
+        If db is provided and user has access policies, DNS-based routing
+        will be limited to allowed domains.
         """
         # Determine AllowedIPs based on tunnel mode
         if device.tunnel_mode == TunnelMode.FULL.value:
@@ -229,6 +234,61 @@ class ClientManager:
         # Add preshared key if present
         if device.preshared_key:
             config_lines.insert(-1, f"PresharedKey = {device.preshared_key}")
+
+        # Add policy info as comments if user has policies
+        if db and device.user_id:
+            policy_comment = self._get_policy_comment(db, device.user_id)
+            if policy_comment:
+                config_lines.insert(0, policy_comment)
+                config_lines.insert(1, "")
+
+        return "\n".join(config_lines)
+
+    def _get_policy_comment(self, db: Session, user_id: str) -> str:
+        """Generate comment block showing user's access policies"""
+        try:
+            policies = self.policy_manager.get_user_effective_policies(db, user_id)
+            if not policies:
+                return ""
+
+            lines = ["# ━━━ Access Policy Summary ━━━"]
+            for p in policies[:5]:  # Limit to 5 policies in comment
+                action = "✓" if p.action == "allow" else "✗"
+                lines.append(f"# {action} {p.resource_type}: {p.resource_value}")
+
+            if len(policies) > 5:
+                lines.append(f"# ... and {len(policies) - 5} more policies")
+
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
+    def check_user_access(
+        self,
+        db: Session,
+        user_id: str,
+        resource_type: str,
+        resource_value: str,
+        context: dict = None
+    ) -> dict:
+        """
+        Check if user has access to a resource
+
+        Returns:
+            {
+                "allowed": bool,
+                "action": str,  # allow, deny, require_mfa
+                "policy_name": str,
+                "reason": str
+            }
+        """
+        return self.policy_manager.evaluate_access(
+            db=db,
+            user_id=user_id,
+            resource_type=resource_type,
+            resource_value=resource_value,
+            context=context or {}
+        )
 
         return "\n".join(config_lines)
 

@@ -6,7 +6,7 @@
 
 set -e
 
-ZTCTL_VERSION="1.1.0"
+ZTCTL_VERSION="1.2.0"
 HUB_URL="${HUB_URL:-http://localhost:8000}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-change-me-admin-secret}"
 CONFIG_FILE="${ZTCTL_CONFIG:-/etc/zerotrust/ztctl.conf}"
@@ -149,6 +149,345 @@ policy_create() {
 }
 
 policy_remove() { [ -z "$1" ] && { print_error "Usage: ztctl policy remove <id>"; exit 1; }; api_call DELETE "/admin/policies/$1"; print_success "Policy $1 removed"; }
+
+# ============= USER ACCESS MANAGEMENT =============
+cmd_user() {
+    local subcmd=${1:-list}; shift || true
+    case "$subcmd" in
+        list|ls) user_list "$@" ;;
+        add|create) user_add "$@" ;;
+        show|get) user_show "$@" ;;
+        groups) user_groups "$@" ;;
+        remove|rm|delete) user_delete "$@" ;;
+        *)
+            echo "Usage: ztctl user <list|add|show|groups|remove>"
+            echo ""
+            echo "Commands:"
+            echo "  list                 List all users"
+            echo "  add <user_id>        Create new user"
+            echo "  show <user_id>       Show user details"
+            echo "  groups <user_id>     Show user's groups"
+            echo "  remove <user_id>     Delete user"
+            echo ""
+            echo "Options for 'add':"
+            echo "  --email=<email>      User email"
+            echo "  --name=<name>        Display name"
+            echo "  --dept=<department>  Department"
+            echo ""
+            echo "Examples:"
+            echo "  ztctl user add john.doe --email=john@example.com --name='John Doe'"
+            echo "  ztctl user groups john.doe"
+            exit 1
+            ;;
+    esac
+}
+
+user_list() {
+    local response=$(api_call GET "/access/users")
+    check_jq
+    echo -e "\n${CYAN}━━━ USERS ━━━${NC}\n"
+    printf "${BOLD}%-4s %-20s %-30s %-15s %-10s${NC}\n" "ID" "USER_ID" "EMAIL" "DEPARTMENT" "STATUS"
+    echo "$response" | jq -r '.[] | "\(.id)\t\(.user_id)\t\(.email // "N/A")\t\(.department // "N/A")\t\(.status)"' 2>/dev/null | while IFS=$'\t' read -r id user_id email dept status; do
+        case "$status" in
+            active) sc="${GREEN}●${NC} active" ;;
+            suspended) sc="${YELLOW}○${NC} suspended" ;;
+            *) sc="$status" ;;
+        esac
+        printf "%-4s %-20s %-30s %-15s %-10b\n" "$id" "$user_id" "$email" "$dept" "$sc"
+    done
+    echo ""
+}
+
+user_add() {
+    local user_id="$1"; shift || { print_error "Usage: ztctl user add <user_id> [options]"; exit 1; }
+    local email="" name="" dept=""
+
+    for arg in "$@"; do
+        case $arg in
+            --email=*) email="${arg#*=}" ;;
+            --name=*) name="${arg#*=}" ;;
+            --dept=*) dept="${arg#*=}" ;;
+        esac
+    done
+
+    local json="{\"user_id\":\"$user_id\""
+    [ -n "$email" ] && json="$json,\"email\":\"$email\""
+    [ -n "$name" ] && json="$json,\"display_name\":\"$name\""
+    [ -n "$dept" ] && json="$json,\"department\":\"$dept\""
+    json="$json}"
+
+    local response=$(api_call POST "/access/users" "$json")
+    if echo "$response" | grep -qE '"error"|"detail"'; then
+        print_error "$(echo "$response" | jq -r '.error // .detail // .message')"
+        exit 1
+    fi
+    print_success "User created: $user_id"
+    echo "$response" | jq '.'
+}
+
+user_show() {
+    [ -z "$1" ] && { print_error "Usage: ztctl user show <user_id>"; exit 1; }
+    api_call GET "/access/users/$1" | jq '.'
+}
+
+user_groups() {
+    [ -z "$1" ] && { print_error "Usage: ztctl user groups <user_id>"; exit 1; }
+    local response=$(api_call GET "/access/users/$1/groups")
+    check_jq
+    echo -e "\n${CYAN}━━━ GROUPS FOR $1 ━━━${NC}\n"
+    echo "$response" | jq -r '.groups[] | "  • \(.name) (\(.display_name // .name))"' 2>/dev/null || echo "  No groups"
+    echo ""
+}
+
+user_delete() {
+    [ -z "$1" ] && { print_error "Usage: ztctl user remove <user_id>"; exit 1; }
+    api_call DELETE "/access/users/$1"
+    print_success "User $1 deleted"
+}
+
+# ============= GROUP MANAGEMENT =============
+cmd_group() {
+    local subcmd=${1:-list}; shift || true
+    case "$subcmd" in
+        list|ls) group_list "$@" ;;
+        add|create) group_add "$@" ;;
+        show|get) group_show "$@" ;;
+        members) group_members "$@" ;;
+        add-member) group_add_member "$@" ;;
+        rm-member|remove-member) group_remove_member "$@" ;;
+        remove|rm|delete) group_delete "$@" ;;
+        *)
+            echo "Usage: ztctl group <list|add|show|members|add-member|rm-member|remove>"
+            echo ""
+            echo "Commands:"
+            echo "  list                      List all groups"
+            echo "  add <name>                Create new group"
+            echo "  show <name>               Show group details"
+            echo "  members <name>            List group members"
+            echo "  add-member <group> <user> Add user to group"
+            echo "  rm-member <group> <user>  Remove user from group"
+            echo "  remove <name>             Delete group"
+            echo ""
+            echo "Examples:"
+            echo "  ztctl group add engineering --name='Engineering Team'"
+            echo "  ztctl group add-member engineering john.doe"
+            exit 1
+            ;;
+    esac
+}
+
+group_list() {
+    local response=$(api_call GET "/access/groups")
+    check_jq
+    echo -e "\n${CYAN}━━━ GROUPS ━━━${NC}\n"
+    printf "${BOLD}%-4s %-20s %-30s %-10s${NC}\n" "ID" "NAME" "DISPLAY NAME" "STATUS"
+    echo "$response" | jq -r '.[] | "\(.id)\t\(.name)\t\(.display_name // .name)\t\(.status)"' 2>/dev/null | while IFS=$'\t' read -r id name display status; do
+        case "$status" in
+            active) sc="${GREEN}●${NC} active" ;;
+            *) sc="$status" ;;
+        esac
+        printf "%-4s %-20s %-30s %-10b\n" "$id" "$name" "$display" "$sc"
+    done
+    echo ""
+}
+
+group_add() {
+    local name="$1"; shift || { print_error "Usage: ztctl group add <name> [options]"; exit 1; }
+    local display="" desc=""
+
+    for arg in "$@"; do
+        case $arg in
+            --name=*|--display=*) display="${arg#*=}" ;;
+            --desc=*) desc="${arg#*=}" ;;
+        esac
+    done
+
+    local json="{\"name\":\"$name\""
+    [ -n "$display" ] && json="$json,\"display_name\":\"$display\""
+    [ -n "$desc" ] && json="$json,\"description\":\"$desc\""
+    json="$json}"
+
+    local response=$(api_call POST "/access/groups" "$json")
+    if echo "$response" | grep -qE '"error"|"detail"'; then
+        print_error "$(echo "$response" | jq -r '.error // .detail // .message')"
+        exit 1
+    fi
+    print_success "Group created: $name"
+}
+
+group_show() {
+    [ -z "$1" ] && { print_error "Usage: ztctl group show <name>"; exit 1; }
+    api_call GET "/access/groups/$1" | jq '.'
+}
+
+group_members() {
+    [ -z "$1" ] && { print_error "Usage: ztctl group members <name>"; exit 1; }
+    local response=$(api_call GET "/access/groups/$1/members")
+    check_jq
+    echo -e "\n${CYAN}━━━ MEMBERS OF $1 ━━━${NC}\n"
+    echo "$response" | jq -r '.members[] | "  • \(.user_id) (\(.display_name // .user_id))"' 2>/dev/null || echo "  No members"
+    echo ""
+}
+
+group_add_member() {
+    [ -z "$1" ] || [ -z "$2" ] && { print_error "Usage: ztctl group add-member <group> <user_id>"; exit 1; }
+    local response=$(api_call POST "/access/groups/$1/members" "{\"user_id\":\"$2\"}")
+    if echo "$response" | grep -q '"success": true'; then
+        print_success "Added $2 to group $1"
+    else
+        print_error "$(echo "$response" | jq -r '.detail // .error // .message')"
+        exit 1
+    fi
+}
+
+group_remove_member() {
+    [ -z "$1" ] || [ -z "$2" ] && { print_error "Usage: ztctl group rm-member <group> <user_id>"; exit 1; }
+    api_call DELETE "/access/groups/$1/members/$2"
+    print_success "Removed $2 from group $1"
+}
+
+group_delete() {
+    [ -z "$1" ] && { print_error "Usage: ztctl group remove <name>"; exit 1; }
+    api_call DELETE "/access/groups/$1"
+    print_success "Group $1 deleted"
+}
+
+# ============= ACCESS POLICY COMMANDS =============
+cmd_access() {
+    local subcmd=${1:-list}; shift || true
+    case "$subcmd" in
+        list|ls) access_list "$@" ;;
+        add|create) access_add "$@" ;;
+        show|get) access_show "$@" ;;
+        remove|rm|delete) access_remove "$@" ;;
+        eval|evaluate|check) access_eval "$@" ;;
+        *)
+            echo "Usage: ztctl access <list|add|show|remove|eval>"
+            echo ""
+            echo "Commands:"
+            echo "  list                   List all access policies"
+            echo "  add [options]          Create access policy"
+            echo "  show <id>              Show policy details"
+            echo "  remove <id>            Delete policy"
+            echo "  eval <user> <domain>   Evaluate access for user"
+            echo ""
+            echo "Options for 'add':"
+            echo "  --name=<name>          Policy name (required)"
+            echo "  --subject=<type:id>    Subject (user:john.doe, group:engineering, all)"
+            echo "  --resource=<type:val>  Resource (domain:*.example.com, ip_range:10.0.0.0/24)"
+            echo "  --action=<action>      allow, deny, require_mfa (default: allow)"
+            echo "  --priority=<num>       Priority (lower = higher) default: 100"
+            echo ""
+            echo "Examples:"
+            echo "  ztctl access add --name=eng-internal --subject=group:engineering --resource=domain:*.internal.com --action=allow"
+            echo "  ztctl access add --name=deny-prod --subject=user:intern --resource=domain:*.prod.com --action=deny --priority=50"
+            echo "  ztctl access eval john.doe api.internal.example.com"
+            exit 1
+            ;;
+    esac
+}
+
+access_list() {
+    local response=$(api_call GET "/access/policies")
+    check_jq
+    echo -e "\n${CYAN}━━━ ACCESS POLICIES ━━━${NC}\n"
+    printf "${BOLD}%-4s %-25s %-12s %-25s %-8s %-5s${NC}\n" "ID" "NAME" "SUBJECT" "RESOURCE" "ACTION" "PRI"
+    echo "$response" | jq -r '.[] | "\(.id)\t\(.name)\t\(.subject_type):\(.subject_id // "*")\t\(.resource_type):\(.resource_value)\t\(.action)\t\(.priority)"' 2>/dev/null | while IFS=$'\t' read -r id name subject resource action pri; do
+        case "$action" in
+            allow) ac="${GREEN}allow${NC}" ;;
+            deny) ac="${RED}deny${NC}" ;;
+            require_mfa) ac="${YELLOW}mfa${NC}" ;;
+            *) ac="$action" ;;
+        esac
+        printf "%-4s %-25s %-12s %-25s %-8b %-5s\n" "$id" "${name:0:25}" "${subject:0:12}" "${resource:0:25}" "$ac" "$pri"
+    done
+    echo ""
+}
+
+access_add() {
+    local name="" subject_type="" subject_id="" resource_type="" resource_value="" action="allow" priority=100
+
+    for arg in "$@"; do
+        case $arg in
+            --name=*) name="${arg#*=}" ;;
+            --subject=*)
+                local subj="${arg#*=}"
+                subject_type="${subj%%:*}"
+                subject_id="${subj#*:}"
+                [ "$subject_type" = "all" ] && subject_id=""
+                ;;
+            --resource=*)
+                local res="${arg#*=}"
+                resource_type="${res%%:*}"
+                resource_value="${res#*:}"
+                ;;
+            --action=*) action="${arg#*=}" ;;
+            --priority=*) priority="${arg#*=}" ;;
+        esac
+    done
+
+    [ -z "$name" ] && { print_error "Policy name is required (--name=...)"; exit 1; }
+    [ -z "$subject_type" ] && { print_error "Subject is required (--subject=user:X or group:X or all)"; exit 1; }
+    [ -z "$resource_type" ] && { print_error "Resource is required (--resource=domain:X or ip_range:X)"; exit 1; }
+
+    # Build JSON - need to lookup subject_id if it's a name
+    local json="{\"name\":\"$name\",\"subject_type\":\"$subject_type\",\"resource_type\":\"$resource_type\",\"resource_value\":\"$resource_value\",\"action\":\"$action\",\"priority\":$priority"
+
+    if [ "$subject_type" = "user" ] && [ -n "$subject_id" ]; then
+        # Get user ID
+        local user_info=$(api_call GET "/access/users/$subject_id")
+        local user_db_id=$(echo "$user_info" | jq -r '.id // empty')
+        [ -z "$user_db_id" ] && { print_error "User $subject_id not found"; exit 1; }
+        json="$json,\"subject_id\":$user_db_id"
+    elif [ "$subject_type" = "group" ] && [ -n "$subject_id" ]; then
+        # Get group ID
+        local group_info=$(api_call GET "/access/groups/$subject_id")
+        local group_db_id=$(echo "$group_info" | jq -r '.id // empty')
+        [ -z "$group_db_id" ] && { print_error "Group $subject_id not found"; exit 1; }
+        json="$json,\"subject_id\":$group_db_id"
+    fi
+
+    json="$json}"
+
+    local response=$(api_call POST "/access/policies" "$json")
+    if echo "$response" | grep -qE '"error"|"detail"'; then
+        print_error "$(echo "$response" | jq -r '.error // .detail // .message')"
+        exit 1
+    fi
+    print_success "Access policy created: $name"
+    echo "  Subject: $subject_type:$subject_id"
+    echo "  Resource: $resource_type:$resource_value"
+    echo "  Action: $action (priority: $priority)"
+}
+
+access_show() {
+    [ -z "$1" ] && { print_error "Usage: ztctl access show <id>"; exit 1; }
+    api_call GET "/access/policies/$1" | jq '.'
+}
+
+access_remove() {
+    [ -z "$1" ] && { print_error "Usage: ztctl access remove <id>"; exit 1; }
+    api_call DELETE "/access/policies/$1"
+    print_success "Access policy $1 deleted"
+}
+
+access_eval() {
+    [ -z "$1" ] || [ -z "$2" ] && { print_error "Usage: ztctl access eval <user_id> <domain>"; exit 1; }
+    local response=$(api_call POST "/access/evaluate" "{\"user_id\":\"$1\",\"resource_type\":\"domain\",\"resource_value\":\"$2\"}")
+    check_jq
+
+    local allowed=$(echo "$response" | jq -r '.allowed')
+    local action=$(echo "$response" | jq -r '.action')
+    local reason=$(echo "$response" | jq -r '.reason')
+
+    if [ "$allowed" = "true" ]; then
+        echo -e "${GREEN}✓ ALLOWED${NC} - $1 can access $2"
+    else
+        echo -e "${RED}✗ DENIED${NC} - $1 cannot access $2"
+    fi
+    echo "  Action: $action"
+    echo "  Reason: $reason"
+}
 
 # ============= CLIENT COMMANDS (Mobile/Laptop VPN) =============
 cmd_client() {
@@ -415,7 +754,7 @@ cmd_status() {
 # ============= HELP =============
 show_help() {
     cat << 'EOF'
-ZTCTL - Zero Trust Network Control CLI (v1.1.0)
+ZTCTL - Zero Trust Network Control CLI (v1.2.0)
 
 USAGE:
     ztctl <command> [subcommand] [options]
@@ -423,11 +762,43 @@ USAGE:
 COMMANDS:
     node        Manage server nodes (list, show, approve, remove)
     client      Manage client devices - mobile/laptop VPN (list, add, config, qr, revoke)
-    policy      Manage access policies (list, allow, deny, remove)
+    policy      Manage network policies (list, allow, deny, remove)
+    user        Manage users (list, add, show, groups, remove)
+    group       Manage groups (list, add, members, add-member, remove)
+    access      Manage access policies (list, add, eval, remove)
     peer        Manage WireGuard peers (list, add, remove)
     sync        Trigger policy sync to all nodes
     status      Show cluster status
     help        Show this help
+
+USER COMMANDS:
+    ztctl user list                     List all users
+    ztctl user add <user_id> [options]  Create new user
+        --email=<email>                 User email
+        --name=<name>                   Display name
+        --dept=<department>             Department
+    ztctl user show <user_id>           Show user details
+    ztctl user groups <user_id>         Show user's groups
+    ztctl user remove <user_id>         Delete user
+
+GROUP COMMANDS:
+    ztctl group list                    List all groups
+    ztctl group add <name> [options]    Create new group
+    ztctl group members <name>          List group members
+    ztctl group add-member <grp> <user> Add user to group
+    ztctl group rm-member <grp> <user>  Remove user from group
+    ztctl group remove <name>           Delete group
+
+ACCESS POLICY COMMANDS:
+    ztctl access list                   List access policies
+    ztctl access add [options]          Create access policy
+        --name=<name>                   Policy name (required)
+        --subject=<type:id>             user:X, group:X, or all
+        --resource=<type:value>         domain:*.example.com, ip_range:10.0.0.0/24
+        --action=<allow|deny|require_mfa>
+        --priority=<num>                Lower = higher priority
+    ztctl access eval <user> <domain>   Test if user can access domain
+    ztctl access remove <id>            Delete policy
 
 NODE COMMANDS:
     ztctl node list                     List all nodes
@@ -447,26 +818,25 @@ CLIENT COMMANDS (Mobile/Laptop VPN):
     ztctl client qr <id>                Generate QR code in terminal
     ztctl client revoke <id>            Revoke device access
 
-POLICY COMMANDS:
+POLICY COMMANDS (Network ACL):
     ztctl policy list                   List all policies
     ztctl policy allow <src> <dst> --port=X --protocol=tcp
     ztctl policy deny <src> <dst> --port=X --protocol=tcp
     ztctl policy remove <id>            Remove policy
 
 EXAMPLES:
-    # Server nodes
-    ztctl node list
-    ztctl node approve 5
+    # User/Group management
+    ztctl user add john.doe --email=john@example.com --name='John Doe'
+    ztctl group add engineering --name='Engineering Team'
+    ztctl group add-member engineering john.doe
+
+    # Access policies
+    ztctl access add --name=eng-internal --subject=group:engineering --resource=domain:*.internal.com
+    ztctl access eval john.doe api.internal.example.com
 
     # Client VPN devices
-    ztctl client add iPhone-John --type=mobile --user=john@company.com
-    ztctl client add MacBook-Work --type=laptop --tunnel=full --expires=90
+    ztctl client add iPhone-John --type=mobile --user=john.doe
     ztctl client qr 1
-    ztctl client revoke 3
-
-    # Policies
-    ztctl policy allow app db --port=5432 --protocol=tcp
-    ztctl policy deny app db --protocol=icmp
 
 ENVIRONMENT:
     HUB_URL       Hub API URL (default: http://localhost:8000)
@@ -479,6 +849,9 @@ case "${1:-help}" in
     node|nodes) shift; cmd_node "$@" ;;
     client|clients|vpn) shift; cmd_client "$@" ;;
     policy|pol) shift; cmd_policy "$@" ;;
+    user|users) shift; cmd_user "$@" ;;
+    group|groups) shift; cmd_group "$@" ;;
+    access|acl) shift; cmd_access "$@" ;;
     peer|peers) shift; cmd_peer "$@" ;;
     sync) shift; cmd_sync "$@" ;;
     status|st) cmd_status ;;
