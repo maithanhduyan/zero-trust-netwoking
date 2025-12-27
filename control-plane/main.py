@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
-from api.v1 import agent, admin, endpoints
+from api.v1 import agent, admin, endpoints, client
 from database.session import init_db, db_manager
 from config import settings
 from schemas.base import HealthResponse, ErrorResponse
@@ -156,6 +156,13 @@ app.include_router(
     admin.router,
     prefix="/api/v1/admin",
     tags=["Admin"]
+)
+
+# Client Device API (Mobile/Laptop VPN)
+app.include_router(
+    client.router,
+    prefix="/api/v1/client",
+    tags=["Client Devices"]
 )
 
 

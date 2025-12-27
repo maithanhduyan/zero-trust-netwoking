@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     ENABLE_AUDIT_LOG: bool = True
     AUDIT_LOG_RETENTION_DAYS: int = 90
 
+    # === Client Device Settings ===
+    CLIENT_IP_POOL_START: int = 100  # Start allocating client IPs from .100
+    CLIENT_IP_POOL_END: int = 250    # End at .250 (150 clients max)
+    CLIENT_DEFAULT_EXPIRES_DAYS: int = 30
+    CLIENT_MAX_DEVICES_PER_USER: int = 5
+    CLIENT_REQUIRE_ADMIN_APPROVAL: bool = False  # Auto-activate client devices
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

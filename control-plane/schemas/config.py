@@ -16,6 +16,7 @@ class PeerConfig(BaseModel):
     allowed_ips: str = Field(..., description="Allowed IP ranges for this peer", examples=["10.0.0.2/32"])
     endpoint: Optional[str] = Field(None, description="Peer endpoint (IP:Port)", examples=["203.0.113.10:51820"])
     persistent_keepalive: int = Field(default=25, description="Keepalive interval in seconds")
+    preshared_key: Optional[str] = Field(None, description="Optional preshared key for extra security")
 
     model_config = ConfigDict(
         json_schema_extra={

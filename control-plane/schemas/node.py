@@ -18,6 +18,7 @@ class NodeRole(str, Enum):
     OPS = "ops"          # Operations / Admin access
     MONITOR = "monitor"  # Monitoring systems
     GATEWAY = "gateway"  # Edge gateway
+    CLIENT = "client"    # End-user devices (mobile, laptop)
 
 
 class NodeStatus(str, Enum):
@@ -26,6 +27,20 @@ class NodeStatus(str, Enum):
     ACTIVE = "active"        # Active and approved
     SUSPENDED = "suspended"  # Temporarily suspended
     REVOKED = "revoked"      # Permanently revoked
+
+
+class DeviceType(str, Enum):
+    """Client device types for mobile/laptop VPN access"""
+    MOBILE = "mobile"        # iOS, Android phones/tablets
+    LAPTOP = "laptop"        # Windows, macOS, Linux laptops
+    DESKTOP = "desktop"      # Desktop computers
+    OTHER = "other"          # Other devices
+
+
+class TunnelMode(str, Enum):
+    """VPN tunnel mode for client devices"""
+    FULL = "full"            # Route all traffic through VPN (0.0.0.0/0)
+    SPLIT = "split"          # Only route overlay network traffic
 
 
 # === Request Schemas ===
@@ -193,6 +208,134 @@ class NodeRegistrationResponse(BaseModel):
 class NodeListResponse(BaseModel):
     """Response for listing multiple nodes"""
     nodes: List[NodeResponse]
+    total: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# === Client Device Schemas (Mobile/Laptop VPN Access) ===
+
+class ClientDeviceCreate(BaseModel):
+    """
+    Schema for registering a new client device (mobile/laptop)
+    Admin or user creates this to get WireGuard config
+    """
+    device_name: str = Field(
+        ...,
+        min_length=2,
+        max_length=64,
+        description="User-friendly device name",
+        examples=["iPhone-John", "MacBook-Pro-Work"]
+    )
+    device_type: DeviceType = Field(
+        default=DeviceType.MOBILE,
+        description="Type of device"
+    )
+    user_id: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Owner user ID (for multi-user support)",
+        examples=["john.doe@company.com"]
+    )
+    tunnel_mode: TunnelMode = Field(
+        default=TunnelMode.FULL,
+        description="VPN tunnel mode: full (all traffic) or split (overlay only)"
+    )
+    expires_days: int = Field(
+        default=30,
+        ge=1,
+        le=365,
+        description="Config expiration in days"
+    )
+    description: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Optional description"
+    )
+
+    @field_validator('device_name')
+    @classmethod
+    def validate_device_name(cls, v: str) -> str:
+        """Validate device name - alphanumeric with hyphens/underscores"""
+        v = v.strip()
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9\-_\s]{0,62}[a-zA-Z0-9]$|^[a-zA-Z0-9]$', v):
+            raise ValueError(
+                'Device name must be alphanumeric with optional hyphens, underscores, spaces'
+            )
+        return v
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "device_name": "iPhone-John",
+                "device_type": "mobile",
+                "user_id": "john.doe@company.com",
+                "tunnel_mode": "full",
+                "expires_days": 30,
+                "description": "John's work iPhone"
+            }
+        }
+    )
+
+
+class ClientDeviceResponse(BaseModel):
+    """Response after client device registration"""
+    id: int
+    device_name: str
+    device_type: DeviceType
+    user_id: Optional[str] = None
+    tunnel_mode: TunnelMode
+    status: NodeStatus
+    overlay_ip: str
+    public_key: str
+    created_at: datetime
+    expires_at: datetime
+
+    # Config download info
+    config_token: str = Field(..., description="One-time token to download config")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ClientConfigResponse(BaseModel):
+    """
+    Complete WireGuard config for client device
+    Can be displayed as text or QR code
+    """
+    device_name: str
+    device_type: DeviceType
+    tunnel_mode: TunnelMode
+
+    # WireGuard config (ready to save as .conf file)
+    wireguard_config: str = Field(..., description="Complete wg0.conf content")
+
+    # QR code for mobile apps
+    qr_code_base64: Optional[str] = Field(None, description="Base64 encoded QR code PNG image")
+
+    # Metadata
+    overlay_ip: str
+    expires_at: datetime
+    hub_endpoint: str
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "device_name": "iPhone-John",
+                "device_type": "mobile",
+                "tunnel_mode": "full",
+                "wireguard_config": "[Interface]\\nPrivateKey=...\\n[Peer]\\n...",
+                "qr_code_base64": "iVBORw0KGgoAAAANSUhEU...",
+                "overlay_ip": "10.0.0.50/24",
+                "expires_at": "2026-01-26T00:00:00Z",
+                "hub_endpoint": "hub.example.com:51820"
+            }
+        }
+    )
+
+
+class ClientDeviceListResponse(BaseModel):
+    """Response for listing client devices"""
+    devices: List[ClientDeviceResponse]
     total: int
 
     model_config = ConfigDict(from_attributes=True)

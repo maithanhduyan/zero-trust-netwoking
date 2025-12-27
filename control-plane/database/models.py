@@ -30,6 +30,21 @@ class NodeRole(str, enum.Enum):
     OPS = "ops"
     MONITOR = "monitor"
     GATEWAY = "gateway"
+    CLIENT = "client"      # End-user devices (mobile, laptop)
+
+
+class DeviceType(str, enum.Enum):
+    """Client device types"""
+    MOBILE = "mobile"
+    LAPTOP = "laptop"
+    DESKTOP = "desktop"
+    OTHER = "other"
+
+
+class TunnelMode(str, enum.Enum):
+    """VPN tunnel mode for client devices"""
+    FULL = "full"          # Route all traffic (0.0.0.0/0)
+    SPLIT = "split"        # Only overlay network
 
 
 class Node(Base):
@@ -336,3 +351,81 @@ class TrustHistory(Base):
         Index('ix_trust_history_score', 'trust_score'),
         Index('ix_trust_history_risk', 'risk_level', 'created_at'),
     )
+
+
+class ClientDevice(Base):
+    """
+    Client Device table - stores mobile/laptop devices for VPN access
+    These are end-user devices that connect via WireGuard client app
+    Unlike Nodes (servers with agents), these are lightweight consumers
+    """
+    __tablename__ = "client_devices"
+
+    # Primary Key
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Device Identity
+    device_name = Column(String(64), nullable=False,
+                         comment="User-friendly device name")
+    device_type = Column(String(20), default=DeviceType.MOBILE.value, nullable=False,
+                         comment="Device type: mobile, laptop, desktop, other")
+    user_id = Column(String(100), nullable=True, index=True,
+                     comment="Owner user ID (email or username)")
+    description = Column(Text, nullable=True,
+                         comment="Optional description")
+
+    # WireGuard Keys (generated server-side for clients)
+    public_key = Column(String(44), unique=True, nullable=False,
+                        comment="WireGuard public key (Base64)")
+    private_key_encrypted = Column(Text, nullable=False,
+                                   comment="Encrypted private key (for config generation)")
+    preshared_key = Column(String(44), nullable=True,
+                           comment="Optional PSK for additional security")
+
+    # Network
+    overlay_ip = Column(String(18), unique=True, nullable=False,
+                        comment="Overlay network IP (e.g., 10.0.0.50/24)")
+    tunnel_mode = Column(String(10), default=TunnelMode.FULL.value, nullable=False,
+                         comment="Tunnel mode: full (0.0.0.0/0) or split (overlay only)")
+
+    # Status
+    status = Column(String(20), default=NodeStatus.ACTIVE.value, nullable=False, index=True,
+                    comment="Device status: active, suspended, revoked")
+
+    # Config token (one-time download)
+    config_token = Column(String(64), unique=True, nullable=True,
+                          comment="Token to download config (cleared after first use)")
+    config_downloaded = Column(Boolean, default=False, nullable=False,
+                               comment="Whether config has been downloaded")
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False,
+                        comment="When this device config expires")
+    last_seen = Column(DateTime, nullable=True,
+                       comment="Last handshake timestamp (from WireGuard)")
+
+    # Indexes
+    __table_args__ = (
+        Index('ix_client_devices_user', 'user_id'),
+        Index('ix_client_devices_status_expires', 'status', 'expires_at'),
+        Index('ix_client_devices_token', 'config_token'),
+    )
+
+    def __repr__(self):
+        return f"<ClientDevice(id={self.id}, name={self.device_name}, user={self.user_id}, status={self.status})>"
+
+    @property
+    def is_active(self) -> bool:
+        """Check if device is active and not expired"""
+        if self.status != NodeStatus.ACTIVE.value:
+            return False
+        if self.expires_at and datetime.utcnow() > self.expires_at:
+            return False
+        return True
+
+    @property
+    def is_expired(self) -> bool:
+        """Check if device config has expired"""
+        return self.expires_at and datetime.utcnow() > self.expires_at
