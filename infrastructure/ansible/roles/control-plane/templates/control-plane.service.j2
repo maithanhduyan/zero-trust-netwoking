@@ -1,0 +1,42 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Zero Trust Control Plane API
+Documentation=https://github.com/your-org/zero-trust-networking
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory={{ control_plane_install_dir }}
+Environment="PATH={{ control_plane_install_dir }}/.venv/bin:/usr/local/bin:/usr/bin"
+EnvironmentFile={{ control_plane_install_dir }}/.env
+
+ExecStart={{ control_plane_install_dir }}/.venv/bin/uvicorn main:app \
+    --host {{ control_plane_host }} \
+    --port {{ control_plane_port }} \
+    --log-level {{ log_level | lower }}
+
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Logging
+StandardOutput=append:/var/log/control-plane/app.log
+StandardError=append:/var/log/control-plane/error.log
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ control_plane_install_dir }}
+ReadWritePaths=/var/log/control-plane
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

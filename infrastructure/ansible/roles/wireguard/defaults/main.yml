@@ -1,0 +1,20 @@
+---
+# roles/wireguard/defaults/main.yml
+
+# WireGuard interface name
+wireguard_interface: wg0
+
+# Config directory
+wireguard_config_dir: /etc/wireguard
+
+# UDP port
+wireguard_port: 51820
+
+# Start service after config
+wireguard_start_service: true
+
+# MTU (default for most cases)
+wireguard_mtu: 1420
+
+# Persistent keepalive for NAT traversal
+wireguard_keepalive: 25

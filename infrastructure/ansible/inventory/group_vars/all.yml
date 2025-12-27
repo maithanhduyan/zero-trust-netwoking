@@ -1,0 +1,42 @@
+---
+# group_vars/all.yml
+# Global variables for all hosts
+
+# ============================================
+# NETWORK CONFIGURATION
+# ============================================
+overlay_network: "10.0.0.0/24"
+hub_overlay_ip: "10.0.0.1"
+
+# WireGuard
+wireguard_port: 51820
+wireguard_interface: wg0
+wireguard_mtu: 1420
+wireguard_keepalive: 25
+
+# ============================================
+# CONTROL PLANE
+# ============================================
+control_plane_port: 8000
+control_plane_url: "https://{{ groups['hub'][0] }}"
+
+# ============================================
+# SECURITY
+# ============================================
+# Change this in production!
+admin_secret: "{{ lookup('env', 'ADMIN_SECRET') | default('change-me-in-production') }}"
+auto_approve_nodes: false
+validate_ssl: false
+
+# ============================================
+# AGENT
+# ============================================
+agent_version: "1.0.0"
+sync_interval: 60
+heartbeat_interval: 30
+log_level: INFO
+
+# ============================================
+# SYSTEM
+# ============================================
+timezone: UTC

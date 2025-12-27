@@ -1,0 +1,82 @@
+---
+# roles/agent/tasks/register.yml
+# Register this node with Control Plane
+
+- name: Wait for Control Plane to be reachable
+  uri:
+    url: "{{ control_plane_url }}/health"
+    method: GET
+    status_code: 200
+    validate_certs: "{{ validate_ssl | default(false) }}"
+  register: cp_health
+  retries: 10
+  delay: 5
+  until: cp_health.status == 200
+  ignore_errors: yes
+
+- name: Check if already registered
+  uri:
+    url: "{{ control_plane_url }}/api/v1/agent/status/{{ inventory_hostname }}"
+    method: GET
+    status_code: [200, 404]
+    validate_certs: "{{ validate_ssl | default(false) }}"
+  register: existing_node
+  ignore_errors: yes
+
+- name: Register node with Control Plane
+  uri:
+    url: "{{ control_plane_url }}/api/v1/agent/register"
+    method: POST
+    body_format: json
+    body:
+      hostname: "{{ inventory_hostname }}"
+      role: "{{ node_role }}"
+      public_key: "{{ wireguard_public_key }}"
+      description: "{{ node_description | default('Deployed via Ansible') }}"
+      agent_version: "{{ agent_version }}"
+      os_info: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+    status_code: [200, 201, 409]
+    validate_certs: "{{ validate_ssl | default(false) }}"
+  register: registration_result
+  when: existing_node.status == 404
+
+- name: Set overlay IP from registration
+  set_fact:
+    overlay_ip: "{{ registration_result.json.data.overlay_ip }}"
+    node_status: "{{ registration_result.json.data.status }}"
+  when: registration_result is defined and registration_result.json is defined
+
+- name: Set overlay IP from existing node
+  set_fact:
+    overlay_ip: "{{ existing_node.json.data.overlay_ip }}"
+    node_status: "{{ existing_node.json.data.status }}"
+  when: existing_node.status == 200
+
+- name: Display registration info
+  debug:
+    msg: |
+      Node: {{ inventory_hostname }}
+      Role: {{ node_role }}
+      Overlay IP: {{ overlay_ip | default('pending') }}
+      Status: {{ node_status | default('unknown') }}
+      Public Key: {{ wireguard_public_key }}
+
+- name: Update WireGuard config with overlay IP
+  set_fact:
+    wireguard_address: "{{ overlay_ip }}"
+  when: overlay_ip is defined
+
+- name: Configure WireGuard spoke
+  template:
+    src: "{{ playbook_dir }}/../roles/wireguard/templates/wg-spoke.conf.j2"
+    dest: "/etc/wireguard/{{ wireguard_interface }}.conf"
+    mode: '0600'
+  notify: restart wireguard
+  when: overlay_ip is defined
+
+- name: Start WireGuard
+  systemd:
+    name: "wg-quick@{{ wireguard_interface }}"
+    enabled: yes
+    state: started
+  when: overlay_ip is defined

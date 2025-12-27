@@ -1,0 +1,6 @@
+---
+# group_vars/ops.yml
+# Variables for Operations/Monitoring nodes
+
+node_role: ops
+node_description: "Operations and monitoring server"

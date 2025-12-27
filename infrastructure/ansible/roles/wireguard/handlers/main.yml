@@ -1,0 +1,13 @@
+---
+# roles/wireguard/handlers/main.yml
+
+- name: restart wireguard
+  systemd:
+    name: "wg-quick@{{ wireguard_interface }}"
+    state: restarted
+  when: wireguard_start_service | default(true)
+
+- name: reload wireguard
+  shell: "wg syncconf {{ wireguard_interface }} <(wg-quick strip {{ wireguard_interface }})"
+  args:
+    executable: /bin/bash

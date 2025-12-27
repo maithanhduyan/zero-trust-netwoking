@@ -1,0 +1,16 @@
+---
+# roles/control-plane/handlers/main.yml
+
+- name: reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: restart control-plane
+  systemd:
+    name: control-plane
+    state: restarted
+
+- name: restart caddy
+  systemd:
+    name: caddy
+    state: restarted

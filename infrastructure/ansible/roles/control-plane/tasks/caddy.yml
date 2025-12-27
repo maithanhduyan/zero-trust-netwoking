@@ -1,0 +1,45 @@
+---
+# roles/control-plane/tasks/caddy.yml
+# Install and configure Caddy reverse proxy for HTTPS
+
+- name: Check if Caddy is installed
+  stat:
+    path: /usr/bin/caddy
+  register: caddy_installed
+
+- name: Install Caddy GPG key and repo
+  shell: |
+    apt install -y debian-keyring debian-archive-keyring apt-transport-https
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null || true
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+  when: not caddy_installed.stat.exists
+  args:
+    warn: false
+
+- name: Install Caddy
+  apt:
+    name: caddy
+    state: present
+    update_cache: yes
+  when: not caddy_installed.stat.exists
+
+- name: Create Caddy log directory
+  file:
+    path: /var/log/caddy
+    state: directory
+    owner: caddy
+    group: caddy
+    mode: '0755'
+
+- name: Configure Caddyfile
+  template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    mode: '0644'
+  notify: restart caddy
+
+- name: Enable and start Caddy
+  systemd:
+    name: caddy
+    enabled: yes
+    state: started

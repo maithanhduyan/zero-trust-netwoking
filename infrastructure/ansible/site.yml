@@ -1,0 +1,213 @@
+---
+# infrastructure/ansible/site.yml
+# Master playbook - Deploy entire Zero Trust Network
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.ini site.yml
+#
+# Deploy specific components:
+#   ansible-playbook -i inventory/hosts.ini site.yml --tags hub
+#   ansible-playbook -i inventory/hosts.ini site.yml --tags agents
+#   ansible-playbook -i inventory/hosts.ini site.yml --tags verify
+
+- name: "Phase 0: Pre-flight checks"
+  hosts: all
+  gather_facts: yes
+  tags: [always]
+  tasks:
+    - name: Display deployment info
+      run_once: true
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║          ZERO TRUST NETWORK DEPLOYMENT                       ║
+          ╠══════════════════════════════════════════════════════════════╣
+          ║  Hub:     {{ groups['hub'] | default([]) | join(', ') | default('Not defined') }}
+          ║  Agents:  {{ groups['agent'] | default([]) | length }} nodes
+          ║  Network: {{ overlay_network }}
+          ╚══════════════════════════════════════════════════════════════╝
+
+    - name: Verify connectivity
+      ping:
+
+# ============================================
+# PHASE 1: DEPLOY HUB
+# ============================================
+- name: "Phase 1: Deploy Control Plane + WireGuard Hub"
+  hosts: hub
+  become: true
+  tags: [hub, control-plane]
+
+  pre_tasks:
+    - name: Gather facts
+      setup:
+
+  roles:
+    - role: common
+      tags: [common]
+
+    - role: wireguard
+      vars:
+        wireguard_config_template: wg-hub.conf.j2
+      tags: [wireguard]
+
+    - role: control-plane
+      tags: [control-plane]
+
+  post_tasks:
+    - name: Save hub public key for agents
+      set_fact:
+        hub_public_key: "{{ wireguard_public_key }}"
+        hub_endpoint: "{{ ansible_host }}:{{ wireguard_port }}"
+      delegate_to: localhost
+      delegate_facts: true
+
+    - name: Display Hub info
+      debug:
+        msg: |
+          Hub deployed successfully!
+          - Public Key: {{ wireguard_public_key }}
+          - Endpoint: {{ ansible_host }}:{{ wireguard_port }}
+          - Control Plane: https://{{ inventory_hostname }}
+
+# ============================================
+# PHASE 2: DEPLOY AGENTS
+# ============================================
+- name: "Phase 2: Deploy Agents to spoke nodes"
+  hosts: agent
+  become: true
+  serial: 5  # Deploy 5 at a time to avoid overwhelming Control Plane
+  tags: [agents]
+
+  pre_tasks:
+    - name: Get hub info from hostvars
+      set_fact:
+        hub_public_key: "{{ hostvars['localhost']['hub_public_key'] | default(hostvars[groups['hub'][0]]['wireguard_public_key']) }}"
+        hub_endpoint: "{{ hostvars['localhost']['hub_endpoint'] | default(hostvars[groups['hub'][0]]['ansible_host'] + ':' + (wireguard_port | string)) }}"
+      when: hub_public_key is not defined
+
+  roles:
+    - role: common
+      tags: [common]
+
+    - role: wireguard
+      vars:
+        wireguard_start_service: false  # Will start after registration
+      tags: [wireguard]
+
+    - role: agent
+      tags: [agent]
+
+# ============================================
+# PHASE 3: SYNC POLICIES
+# ============================================
+- name: "Phase 3: Sync policies to Control Plane"
+  hosts: hub
+  become: true
+  tags: [policies]
+
+  tasks:
+    - name: Find policy files
+      find:
+        paths: "{{ playbook_dir }}/../../policies"
+        patterns: "*.yaml,*.yml"
+        recurse: yes
+      delegate_to: localhost
+      become: no
+      register: policy_files
+
+    - name: Read global policy
+      slurp:
+        src: "{{ playbook_dir }}/../../policies/global.yaml"
+      delegate_to: localhost
+      become: no
+      register: global_policy_content
+
+    - name: Parse global policy
+      set_fact:
+        global_policy: "{{ global_policy_content.content | b64decode | from_yaml }}"
+
+    - name: Sync default policies
+      uri:
+        url: "http://localhost:{{ control_plane_port }}/api/v1/admin/policies"
+        method: POST
+        headers:
+          Content-Type: application/json
+          X-Admin-Token: "{{ admin_secret }}"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          description: "{{ item.description | default('') }}"
+          src_role: "{{ item.src_role }}"
+          dst_role: "{{ item.dst_role }}"
+          protocol: "{{ item.protocol | default('tcp') }}"
+          port: "{{ item.port | default(omit) }}"
+          action: "{{ item.action }}"
+          priority: "{{ item.priority | default(100) }}"
+          enabled: true
+        status_code: [200, 201, 409]
+      loop: "{{ global_policy.default_policies | default([]) }}"
+      ignore_errors: yes
+
+    - name: Display synced policies
+      debug:
+        msg: "Synced {{ global_policy.default_policies | default([]) | length }} policies"
+
+# ============================================
+# PHASE 4: VERIFY DEPLOYMENT
+# ============================================
+- name: "Phase 4: Verify deployment"
+  hosts: hub
+  become: true
+  tags: [verify]
+
+  tasks:
+    - name: Check Control Plane health
+      uri:
+        url: "http://localhost:{{ control_plane_port }}/health"
+        method: GET
+      register: health
+
+    - name: Get network statistics
+      uri:
+        url: "http://localhost:{{ control_plane_port }}/api/v1/admin/network/stats"
+        method: GET
+        headers:
+          X-Admin-Token: "{{ admin_secret }}"
+      register: network_stats
+
+    - name: Check WireGuard status
+      command: wg show {{ wireguard_interface }}
+      register: wg_status
+      changed_when: false
+
+    - name: Display deployment summary
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║          DEPLOYMENT COMPLETE                                 ║
+          ╠══════════════════════════════════════════════════════════════╣
+          ║  Control Plane: {{ health.json.status }}
+          ║  Total Nodes:   {{ network_stats.json.data.total_nodes | default(0) }}
+          ║  Active Nodes:  {{ network_stats.json.data.active_nodes | default(0) }}
+          ║  Allocated IPs: {{ network_stats.json.data.allocated_ips | default(0) }}
+          ╠══════════════════════════════════════════════════════════════╣
+          ║  WireGuard Peers:
+          {{ wg_status.stdout | indent(10) }}
+          ╚══════════════════════════════════════════════════════════════╝
+
+- name: "Phase 5: Test connectivity (optional)"
+  hosts: agent
+  become: true
+  tags: [test, never]  # Only run with --tags test
+
+  tasks:
+    - name: Ping hub via overlay network
+      command: ping -c 3 {{ hub_overlay_ip }}
+      register: ping_hub
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display connectivity result
+      debug:
+        msg: "{{ inventory_hostname }} -> Hub: {{ 'OK' if ping_hub.rc == 0 else 'FAILED' }}"

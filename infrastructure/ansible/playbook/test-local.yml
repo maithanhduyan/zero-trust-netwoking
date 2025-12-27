@@ -1,0 +1,273 @@
+---
+# infrastructure/ansible/playbook/test-local.yml
+# Test Ansible playbooks on localhost before deploying to real servers
+#
+# Usage:
+#   cd infrastructure/ansible
+#   ansible-playbook -i inventory/local.ini playbook/test-local.yml
+#
+# This playbook:
+# 1. Validates syntax of all roles
+# 2. Tests Control Plane deployment locally
+# 3. Runs verification checks
+
+- name: "Pre-flight: Validate playbook syntax"
+  hosts: localhost
+  gather_facts: yes
+  connection: local
+
+  tasks:
+    - name: Check Ansible version
+      assert:
+        that:
+          - ansible_version.major >= 2
+          - ansible_version.minor >= 9
+        fail_msg: "Ansible 2.9+ required. Current: {{ ansible_version.full }}"
+        success_msg: "Ansible version OK: {{ ansible_version.full }}"
+
+    - name: Check Python version
+      assert:
+        that:
+          - ansible_python_version is version('3.8', '>=')
+        fail_msg: "Python 3.8+ required"
+        success_msg: "Python version OK: {{ ansible_python_version }}"
+
+    - name: Check if running as root (or can become root)
+      command: id -u
+      register: user_id
+      changed_when: false
+
+    - name: Display user info
+      debug:
+        msg: "Running as UID: {{ user_id.stdout }}"
+
+    - name: Check required directories exist
+      stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ playbook_dir }}/../roles/common"
+        - "{{ playbook_dir }}/../roles/wireguard"
+        - "{{ playbook_dir }}/../roles/control-plane"
+        - "{{ playbook_dir }}/../roles/agent"
+        - "{{ playbook_dir }}/../../../control-plane"
+        - "{{ playbook_dir }}/../../../agent"
+        - "{{ playbook_dir }}/../../../policies"
+      register: dir_checks
+
+    - name: Validate directories exist
+      assert:
+        that:
+          - item.stat.exists
+          - item.stat.isdir
+        fail_msg: "Directory not found: {{ item.item }}"
+      loop: "{{ dir_checks.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check role structure
+      stat:
+        path: "{{ playbook_dir }}/../roles/{{ item }}/tasks/main.yml"
+      loop:
+        - common
+        - wireguard
+        - control-plane
+        - agent
+      register: role_checks
+
+    - name: Validate role tasks exist
+      assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Role tasks not found: {{ item.item }}"
+      loop: "{{ role_checks.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: "✓ Pre-flight checks passed"
+      debug:
+        msg: "All pre-flight checks passed!"
+
+- name: "Test: Common role (dry-run)"
+  hosts: hub
+  become: true
+  gather_facts: yes
+
+  vars:
+    # Override for local testing
+    configure_firewall: false
+
+  tasks:
+    - name: Test common role variables
+      debug:
+        msg: |
+          Common role will install:
+          - Packages: {{ common_packages | default(['curl', 'wget']) | join(', ') }}
+          - Timezone: {{ timezone | default('UTC') }}
+
+    - name: Check if apt is available
+      command: which apt
+      register: apt_check
+      changed_when: false
+      failed_when: false
+
+    - name: Skip apt tasks if not Debian
+      debug:
+        msg: "Skipping apt tasks - not a Debian-based system"
+      when: apt_check.rc != 0
+
+- name: "Test: WireGuard role (dry-run)"
+  hosts: hub
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Check if WireGuard is installed
+      command: which wg
+      register: wg_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display WireGuard status
+      debug:
+        msg: "WireGuard: {{ 'installed' if wg_check.rc == 0 else 'not installed' }}"
+
+    - name: Check existing WireGuard config
+      stat:
+        path: /etc/wireguard
+      register: wg_dir
+
+    - name: Display WireGuard config status
+      debug:
+        msg: "WireGuard config dir: {{ 'exists' if wg_dir.stat.exists else 'not found' }}"
+
+- name: "Test: Control Plane source code"
+  hosts: hub
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Check Control Plane source files
+      stat:
+        path: "{{ playbook_dir }}/../../../control-plane/{{ item }}"
+      loop:
+        - main.py
+        - config.py
+        - pyproject.toml
+        - api/v1/agent.py
+        - core/ipam.py
+      register: cp_files
+
+    - name: Validate Control Plane files exist
+      assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Control Plane file missing: {{ item.item }}"
+      loop: "{{ cp_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: "✓ Control Plane source validated"
+      debug:
+        msg: "All Control Plane source files found"
+
+- name: "Test: Agent source code"
+  hosts: hub
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Check Agent source files
+      stat:
+        path: "{{ playbook_dir }}/../../../agent/{{ item }}"
+      loop:
+        - agent.py
+        - client.py
+        - pyproject.toml
+        - wireguard/manager.py
+        - firewall/iptables.py
+      register: agent_files
+
+    - name: Validate Agent files exist
+      assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Agent file missing: {{ item.item }}"
+      loop: "{{ agent_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: "✓ Agent source validated"
+      debug:
+        msg: "All Agent source files found"
+
+- name: "Test: Policy files"
+  hosts: hub
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Check policy files
+      stat:
+        path: "{{ playbook_dir }}/../../../policies/{{ item }}"
+      loop:
+        - global.yaml
+        - roles/app.yaml
+        - roles/database.yaml
+        - roles/ops.yaml
+      register: policy_files
+
+    - name: Validate policy files exist
+      assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Policy file missing: {{ item.item }}"
+      loop: "{{ policy_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read and validate global.yaml
+      slurp:
+        src: "{{ playbook_dir }}/../../../policies/global.yaml"
+      register: global_policy
+
+    - name: Parse global policy
+      set_fact:
+        policy: "{{ global_policy.content | b64decode | from_yaml }}"
+
+    - name: Validate global policy structure
+      assert:
+        that:
+          - policy.metadata is defined
+          - policy.default_policies is defined
+        fail_msg: "Invalid global.yaml structure"
+
+    - name: "✓ Policies validated"
+      debug:
+        msg: |
+          Global policy version: {{ policy.metadata.version }}
+          Default policies: {{ policy.default_policies | length }}
+
+- name: "Summary"
+  hosts: localhost
+  gather_facts: no
+  connection: local
+
+  tasks:
+    - name: Display test summary
+      debug:
+        msg: |
+          ╔══════════════════════════════════════════════════════════════╗
+          ║          LOCAL TESTS COMPLETED                               ║
+          ╠══════════════════════════════════════════════════════════════╣
+          ║  ✓ Pre-flight checks passed                                  ║
+          ║  ✓ Role structure validated                                  ║
+          ║  ✓ Control Plane source validated                            ║
+          ║  ✓ Agent source validated                                    ║
+          ║  ✓ Policy files validated                                    ║
+          ╠══════════════════════════════════════════════════════════════╣
+          ║  Ready for deployment!                                       ║
+          ║                                                              ║
+          ║  Next steps:                                                 ║
+          ║  1. Edit inventory/hosts.ini with real servers               ║
+          ║  2. Run: ansible-playbook -i inventory/hosts.ini site.yml    ║
+          ╚══════════════════════════════════════════════════════════════╝

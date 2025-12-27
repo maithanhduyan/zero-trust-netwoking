@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+# WireGuard Spoke (Agent) Configuration
+
+[Interface]
+Address = {{ wireguard_address }}
+PrivateKey = {{ wireguard_private_key }}
+MTU = {{ wireguard_mtu | default(1420) }}
+{% if wireguard_dns is defined %}
+DNS = {{ wireguard_dns | join(', ') }}
+{% endif %}
+
+# Connect to Hub
+[Peer]
+# Hub node
+PublicKey = {{ hub_public_key }}
+Endpoint = {{ hub_endpoint }}
+AllowedIPs = {{ hub_allowed_ips | default('10.0.0.0/24') }}
+PersistentKeepalive = {{ wireguard_keepalive | default(25) }}

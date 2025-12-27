@@ -1,0 +1,6 @@
+---
+# group_vars/db.yml
+# Variables for Database server nodes
+
+node_role: db
+node_description: "Database server"

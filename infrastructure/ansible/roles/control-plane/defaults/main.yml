@@ -1,0 +1,27 @@
+---
+# roles/control-plane/defaults/main.yml
+
+# Installation directory
+control_plane_install_dir: /opt/control-plane
+
+# API server settings
+control_plane_port: 8000
+control_plane_host: "0.0.0.0"
+
+# Database (SQLite for dev, PostgreSQL for prod)
+control_plane_database_url: "sqlite:///./data/zerotrust.db"
+
+# Overlay network configuration
+overlay_network: "10.0.0.0/24"
+hub_overlay_ip: "10.0.0.1"
+
+# Security settings
+auto_approve_nodes: false
+admin_secret: "change-me-in-production"
+
+# Caddy reverse proxy
+install_caddy: true
+caddy_domain: "{{ inventory_hostname }}"
+
+# Logging
+log_level: INFO

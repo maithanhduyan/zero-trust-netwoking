@@ -1,0 +1,6 @@
+---
+# group_vars/app.yml
+# Variables for Application server nodes
+
+node_role: app
+node_description: "Application server"

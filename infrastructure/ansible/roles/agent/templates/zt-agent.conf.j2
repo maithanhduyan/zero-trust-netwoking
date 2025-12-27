@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+# Zero Trust Agent Configuration
+
+[agent]
+hostname = {{ inventory_hostname }}
+role = {{ node_role }}
+control_plane_url = {{ control_plane_url }}
+sync_interval = {{ sync_interval }}
+heartbeat_interval = {{ heartbeat_interval }}
+
+[wireguard]
+interface = {{ wireguard_interface }}
+config_dir = /etc/wireguard
+
+[security]
+validate_ssl = {{ validate_ssl | lower }}
+
+[logging]
+level = {{ log_level }}
+file = {{ log_file }}

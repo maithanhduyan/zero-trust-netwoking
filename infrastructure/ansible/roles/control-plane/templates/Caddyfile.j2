@@ -1,0 +1,59 @@
+# {{ ansible_managed }}
+# Caddy Reverse Proxy for Control Plane
+
+{% if caddy_domain is defined and caddy_domain != '' %}
+{{ caddy_domain }} {
+    # Automatic HTTPS with Let's Encrypt
+
+    # Reverse proxy to Control Plane
+    reverse_proxy localhost:{{ control_plane_port }} {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # TLS configuration
+    tls {
+        protocols tls1.2 tls1.3
+    }
+
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+
+    # Rate limiting for API
+    @api path /api/*
+    rate_limit @api {
+        zone api_limit {
+            key {remote_host}
+            events 100
+            window 1m
+        }
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+{% else %}
+# Development mode - HTTP only on port 80
+:80 {
+    reverse_proxy localhost:{{ control_plane_port }}
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
+{% endif %}

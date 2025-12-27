@@ -1,0 +1,14 @@
+---
+# group_vars/hub.yml
+# Variables for Hub nodes
+
+node_role: hub
+is_hub: true
+
+# WireGuard Hub listens on public port
+wireguard_address: "{{ hub_overlay_ip }}/24"
+wireguard_config_template: wg-hub.conf.j2
+
+# Control Plane runs on hub
+install_caddy: true
+control_plane_database_url: "sqlite:///./data/zerotrust.db"

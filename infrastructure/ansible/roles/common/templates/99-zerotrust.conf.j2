@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# Zero Trust Network sysctl settings
+
+{% for setting in sysctl_settings %}
+{{ setting.name }} = {{ setting.value }}
+{% endfor %}

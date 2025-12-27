@@ -1,0 +1,29 @@
+---
+# roles/agent/defaults/main.yml
+
+# Agent installation
+agent_install_dir: /opt/zt-agent
+agent_version: "1.0.0"
+
+# Control Plane connection
+control_plane_url: "https://hub.example.com"
+validate_ssl: false
+
+# Sync settings
+sync_interval: 60
+heartbeat_interval: 30
+
+# Node configuration (should be overridden per host)
+# node_role: app
+# node_description: "Application server"
+
+# WireGuard
+wireguard_interface: wg0
+
+# Auto-register on deploy
+auto_register: true
+start_agent: true
+
+# Logging
+log_level: INFO
+log_file: /var/log/zerotrust/agent.log

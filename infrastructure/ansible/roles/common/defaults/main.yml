@@ -1,0 +1,40 @@
+---
+# roles/common/defaults/main.yml
+# Default variables for common role
+
+# Base packages to install on all nodes
+common_packages:
+  - curl
+  - wget
+  - git
+  - vim
+  - htop
+  - net-tools
+  - dnsutils
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - jq
+
+# Timezone
+timezone: UTC
+
+# Sysctl settings for Zero Trust networking
+sysctl_settings:
+  - name: net.ipv4.ip_forward
+    value: "1"
+  - name: net.ipv4.conf.all.rp_filter
+    value: "0"
+  - name: net.ipv4.conf.default.rp_filter
+    value: "0"
+  - name: net.core.rmem_max
+    value: "26214400"
+  - name: net.core.wmem_max
+    value: "26214400"
+
+# Firewall
+configure_firewall: true
+allow_ssh: true
+
+# WireGuard port (if defined, will be allowed in firewall)
+# wireguard_port: 51820

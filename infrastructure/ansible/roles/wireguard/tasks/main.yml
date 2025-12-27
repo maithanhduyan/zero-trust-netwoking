@@ -1,0 +1,67 @@
+---
+# roles/wireguard/tasks/main.yml
+# WireGuard installation and configuration
+
+- name: Install WireGuard
+  apt:
+    name:
+      - wireguard
+      - wireguard-tools
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Create WireGuard directory
+  file:
+    path: "{{ wireguard_config_dir }}"
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Check if private key exists
+  stat:
+    path: "{{ wireguard_config_dir }}/private.key"
+  register: wg_private_key_stat
+
+- name: Generate WireGuard keypair
+  include_tasks: generate_keys.yml
+  when: not wg_private_key_stat.stat.exists
+
+- name: Read existing private key
+  slurp:
+    src: "{{ wireguard_config_dir }}/private.key"
+  register: wg_private_key_content
+  when: wg_private_key_stat.stat.exists
+
+- name: Read existing public key
+  slurp:
+    src: "{{ wireguard_config_dir }}/public.key"
+  register: wg_public_key_content
+  when: wg_private_key_stat.stat.exists
+
+- name: Set key facts (existing keys)
+  set_fact:
+    wireguard_private_key: "{{ wg_private_key_content.content | b64decode | trim }}"
+    wireguard_public_key: "{{ wg_public_key_content.content | b64decode | trim }}"
+  when: wg_private_key_stat.stat.exists
+
+- name: Display public key
+  debug:
+    msg: "WireGuard Public Key: {{ wireguard_public_key }}"
+
+- name: Configure WireGuard interface
+  template:
+    src: "{{ wireguard_config_template }}"
+    dest: "{{ wireguard_config_dir }}/{{ wireguard_interface }}.conf"
+    mode: '0600'
+    owner: root
+    group: root
+  notify: restart wireguard
+  when: wireguard_config_template is defined
+
+- name: Enable WireGuard service
+  systemd:
+    name: "wg-quick@{{ wireguard_interface }}"
+    enabled: yes
+    state: started
+  when: wireguard_start_service | default(true)

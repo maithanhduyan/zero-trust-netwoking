@@ -1,0 +1,10 @@
+---
+# group_vars/agent.yml
+# Variables for all agent nodes (non-hub)
+
+# Agents connect to hub
+hub_allowed_ips: "{{ overlay_network }}"
+
+# Auto-register with Control Plane
+auto_register: true
+start_agent: true

@@ -1,0 +1,34 @@
+---
+# roles/wireguard/tasks/generate_keys.yml
+# Generate WireGuard keypair
+
+- name: Generate private key
+  shell: wg genkey
+  register: wg_genkey_result
+  changed_when: true
+
+- name: Save private key
+  copy:
+    content: "{{ wg_genkey_result.stdout }}"
+    dest: "{{ wireguard_config_dir }}/private.key"
+    mode: '0600'
+    owner: root
+    group: root
+
+- name: Generate public key from private key
+  shell: echo "{{ wg_genkey_result.stdout }}" | wg pubkey
+  register: wg_pubkey_result
+  changed_when: false
+
+- name: Save public key
+  copy:
+    content: "{{ wg_pubkey_result.stdout }}"
+    dest: "{{ wireguard_config_dir }}/public.key"
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Set key facts
+  set_fact:
+    wireguard_private_key: "{{ wg_genkey_result.stdout | trim }}"
+    wireguard_public_key: "{{ wg_pubkey_result.stdout | trim }}"

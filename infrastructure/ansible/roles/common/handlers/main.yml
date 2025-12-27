@@ -1,0 +1,5 @@
+---
+# roles/common/handlers/main.yml
+
+- name: reload sysctl
+  command: sysctl --system

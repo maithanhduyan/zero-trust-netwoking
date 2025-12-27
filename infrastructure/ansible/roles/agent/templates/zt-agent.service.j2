@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Zero Trust Network Agent
+Documentation=https://github.com/your-org/zero-trust-networking
+After=network.target network-online.target wg-quick@{{ wireguard_interface }}.service
+Wants=network-online.target
+Requires=wg-quick@{{ wireguard_interface }}.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory={{ agent_install_dir }}
+Environment="PATH={{ agent_install_dir }}/.venv/bin:/usr/local/bin:/usr/bin"
+
+ExecStart={{ agent_install_dir }}/.venv/bin/python agent.py \
+    --hostname {{ inventory_hostname }} \
+    --role {{ node_role }} \
+    --control-plane {{ control_plane_url }} \
+    --sync-interval {{ sync_interval }}
+
+Restart=always
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Logging
+StandardOutput=append:{{ log_file }}
+StandardError=append:{{ log_file }}
+
+# Security
+NoNewPrivileges=false
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

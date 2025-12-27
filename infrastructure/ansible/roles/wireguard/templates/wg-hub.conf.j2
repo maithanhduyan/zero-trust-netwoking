@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+# WireGuard Hub Configuration
+
+[Interface]
+Address = {{ wireguard_address }}
+ListenPort = {{ wireguard_port }}
+PrivateKey = {{ wireguard_private_key }}
+MTU = {{ wireguard_mtu | default(1420) }}
+
+# Enable IP forwarding and NAT for hub
+PostUp = iptables -A FORWARD -i %i -j ACCEPT
+PostUp = iptables -A FORWARD -o %i -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -o {{ ansible_default_ipv4.interface | default('eth0') }} -j MASQUERADE
+PostUp = iptables-save > /etc/iptables/rules.v4
+
+PostDown = iptables -D FORWARD -i %i -j ACCEPT
+PostDown = iptables -D FORWARD -o %i -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o {{ ansible_default_ipv4.interface | default('eth0') }} -j MASQUERADE
+
+# Peers are managed dynamically by Control Plane
+# Initial peers can be added below:
+{% if wireguard_peers is defined %}
+{% for peer in wireguard_peers %}
+
+[Peer]
+# {{ peer.name | default(peer.public_key[:20] + '...') }}
+PublicKey = {{ peer.public_key }}
+AllowedIPs = {{ peer.allowed_ips }}
+{% if peer.endpoint is defined %}
+Endpoint = {{ peer.endpoint }}
+{% endif %}
+{% if peer.persistent_keepalive is defined %}
+PersistentKeepalive = {{ peer.persistent_keepalive }}
+{% endif %}
+{% endfor %}
+{% endif %}

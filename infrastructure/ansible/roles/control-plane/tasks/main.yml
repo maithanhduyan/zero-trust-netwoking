@@ -1,0 +1,96 @@
+---
+# roles/control-plane/tasks/main.yml
+# Deploy Zero Trust Control Plane
+
+- name: Create control plane directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ control_plane_install_dir }}"
+    - "{{ control_plane_install_dir }}/data"
+    - /var/log/control-plane
+
+- name: Install uv package manager
+  shell: |
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  args:
+    creates: "{{ ansible_env.HOME }}/.cargo/bin/uv"
+  environment:
+    HOME: "{{ ansible_env.HOME }}"
+
+- name: Add uv to PATH
+  lineinfile:
+    path: /etc/environment
+    line: 'PATH="{{ ansible_env.HOME }}/.cargo/bin:{{ ansible_env.PATH }}"'
+    state: present
+
+- name: Copy control plane source code
+  synchronize:
+    src: "{{ control_plane_source_dir }}/"
+    dest: "{{ control_plane_install_dir }}/"
+    delete: no
+    recursive: yes
+  delegate_to: "{{ inventory_hostname }}"
+  when: control_plane_source_dir is defined
+
+- name: Copy control plane source (local)
+  copy:
+    src: "{{ playbook_dir }}/../../../control-plane/"
+    dest: "{{ control_plane_install_dir }}/"
+    mode: preserve
+  when: control_plane_source_dir is not defined
+
+- name: Create Python virtual environment
+  command: "{{ ansible_env.HOME }}/.cargo/bin/uv venv {{ control_plane_install_dir }}/.venv"
+  args:
+    creates: "{{ control_plane_install_dir }}/.venv"
+
+- name: Install dependencies with uv
+  shell: |
+    cd {{ control_plane_install_dir }}
+    {{ ansible_env.HOME }}/.cargo/bin/uv sync
+  args:
+    chdir: "{{ control_plane_install_dir }}"
+
+- name: Create .env configuration file
+  template:
+    src: control-plane.env.j2
+    dest: "{{ control_plane_install_dir }}/.env"
+    mode: '0600'
+  notify: restart control-plane
+
+- name: Create systemd service
+  template:
+    src: control-plane.service.j2
+    dest: /etc/systemd/system/control-plane.service
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart control-plane
+
+- name: Enable and start control plane
+  systemd:
+    name: control-plane
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Wait for control plane to be ready
+  uri:
+    url: "http://127.0.0.1:{{ control_plane_port }}/health"
+    method: GET
+    status_code: 200
+  register: health_check
+  retries: 30
+  delay: 2
+  until: health_check.status == 200
+
+- name: Display control plane status
+  debug:
+    msg: "Control Plane is running: {{ health_check.json }}"
+
+- name: Install Caddy reverse proxy
+  include_tasks: caddy.yml
+  when: install_caddy | default(true)

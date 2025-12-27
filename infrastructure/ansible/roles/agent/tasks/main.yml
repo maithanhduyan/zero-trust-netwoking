@@ -1,0 +1,71 @@
+---
+# roles/agent/tasks/main.yml
+# Deploy Zero Trust Agent
+
+- name: Create agent directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ agent_install_dir }}"
+    - /var/log/zerotrust
+    - /etc/zerotrust
+
+- name: Install uv package manager
+  shell: |
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  args:
+    creates: "{{ ansible_env.HOME }}/.cargo/bin/uv"
+  environment:
+    HOME: "{{ ansible_env.HOME }}"
+
+- name: Copy agent source code
+  copy:
+    src: "{{ playbook_dir }}/../../../agent/"
+    dest: "{{ agent_install_dir }}/"
+    mode: preserve
+
+- name: Create Python virtual environment
+  command: "{{ ansible_env.HOME }}/.cargo/bin/uv venv {{ agent_install_dir }}/.venv"
+  args:
+    creates: "{{ agent_install_dir }}/.venv"
+
+- name: Install agent dependencies
+  shell: |
+    cd {{ agent_install_dir }}
+    {{ ansible_env.HOME }}/.cargo/bin/uv sync 2>/dev/null || {{ agent_install_dir }}/.venv/bin/pip install -e .
+  args:
+    chdir: "{{ agent_install_dir }}"
+
+- name: Create agent configuration
+  template:
+    src: zt-agent.conf.j2
+    dest: /etc/zerotrust/agent.conf
+    mode: '0600'
+  notify: restart zt-agent
+
+- name: Create systemd service
+  template:
+    src: zt-agent.service.j2
+    dest: /etc/systemd/system/zt-agent.service
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart zt-agent
+
+- name: Enable zt-agent service
+  systemd:
+    name: zt-agent
+    enabled: yes
+    daemon_reload: yes
+
+- name: Register node with Control Plane
+  include_tasks: register.yml
+  when: auto_register | default(true)
+
+- name: Start zt-agent service
+  systemd:
+    name: zt-agent
+    state: started
+  when: start_agent | default(true)
