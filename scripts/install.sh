@@ -186,8 +186,11 @@ setup_wireguard_hub() {
     WG_PRIVATE_KEY=$(cat /etc/wireguard/private.key)
     WG_PUBLIC_KEY=$(cat /etc/wireguard/public.key)
 
-    # Get public IP
-    PUBLIC_IP=$(curl -s ifconfig.me || curl -s icanhazip.com || echo "YOUR_PUBLIC_IP")
+    # Get public IPv4 (prefer -4 flag to get IPv4 instead of IPv6)
+    PUBLIC_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
+                curl -4 -s --max-time 5 icanhazip.com 2>/dev/null || \
+                curl -4 -s --max-time 5 ipv4.icanhazip.com 2>/dev/null || \
+                echo "YOUR_PUBLIC_IP")
 
     # Get default interface
     DEFAULT_IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
@@ -262,7 +265,10 @@ setup_control_plane() {
 
     # Read WireGuard info
     WG_PUBLIC_KEY=$(cat /etc/wireguard/public.key 2>/dev/null || echo "REPLACE_WITH_HUB_PUBLIC_KEY")
-    PUBLIC_IP=$(cat /etc/wireguard/hub_endpoint 2>/dev/null || curl -s ifconfig.me || echo "127.0.0.1")
+    PUBLIC_IP=$(cat /etc/wireguard/hub_endpoint 2>/dev/null || \
+                curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
+                curl -4 -s --max-time 5 ipv4.icanhazip.com 2>/dev/null || \
+                echo "127.0.0.1")
 
     # Create .env file for control-plane
     log "Tạo cấu hình Control Plane..."
@@ -370,7 +376,10 @@ show_summary() {
 
     # Get info
     WG_PUBLIC_KEY=$(cat /etc/wireguard/public.key 2>/dev/null || echo "N/A")
-    PUBLIC_IP=$(cat /etc/wireguard/hub_endpoint 2>/dev/null || curl -s ifconfig.me || echo "N/A")
+    PUBLIC_IP=$(cat /etc/wireguard/hub_endpoint 2>/dev/null || \
+                curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
+                curl -4 -s --max-time 5 ipv4.icanhazip.com 2>/dev/null || \
+                echo "N/A")
     WG_STATUS=$(wg show wg0 2>/dev/null | head -5 || echo "Not running")
     API_STATUS=$(curl -s http://localhost:8000/health 2>/dev/null | grep -o '"status":"[^"]*"' || echo "Not responding")
 
