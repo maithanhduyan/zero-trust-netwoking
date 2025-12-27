@@ -5,7 +5,7 @@ SQLAlchemy Database Models for Zero Trust Control Plane
 
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Text,
-    Index
+    Index, Float
 )
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
@@ -73,6 +73,16 @@ class Node(Base):
     # Agent Metadata
     agent_version = Column(String(20), nullable=True)
     os_info = Column(String(100), nullable=True)
+
+    # Trust Score (Dynamic Trust Algorithm)
+    trust_score = Column(Float, default=1.0, nullable=False,
+                         comment="Trust score 0.0-1.0, lower = less trusted")
+    trust_factors = Column(Text, nullable=True,
+                           comment="JSON-encoded trust factor breakdown")
+    last_trust_update = Column(DateTime, nullable=True,
+                               comment="Last trust score recalculation")
+    risk_level = Column(String(20), default="low", nullable=False,
+                        comment="Risk level: low, medium, high, critical")
 
     # Config versioning
     config_version = Column(Integer, default=1, nullable=False,
@@ -220,7 +230,7 @@ class NodeHistory(Base):
     """
     Node History table - tracks node lifecycle events
     Stores detailed history of node status changes, installations, uninstalls
-    
+
     Use cases:
     - Track when node was installed/uninstalled
     - Monitor node uptime patterns
@@ -236,17 +246,17 @@ class NodeHistory(Base):
                      comment="Reference to nodes.id")
     hostname = Column(String(63), nullable=False, index=True,
                       comment="Hostname at time of event (denormalized for history)")
-    
+
     # Event information
     event = Column(String(50), nullable=False, index=True,
                    comment="Event: registered, re-registered, uninstalled, status_changed, heartbeat_lost, peer_added, peer_removed")
-    
+
     # Status tracking
     old_status = Column(String(20), nullable=True,
                         comment="Previous status (for status_changed events)")
     new_status = Column(String(20), nullable=True,
                         comment="New status (for status_changed events)")
-    
+
     # Network state at event time
     overlay_ip = Column(String(18), nullable=True,
                         comment="Overlay IP at time of event")
@@ -254,13 +264,13 @@ class NodeHistory(Base):
                      comment="Public IP at time of event")
     public_key = Column(String(44), nullable=True,
                         comment="WireGuard public key at time of event")
-    
+
     # Additional context
     details = Column(Text, nullable=True,
                      comment="JSON-encoded additional details")
     triggered_by = Column(String(50), nullable=True,
                           comment="What triggered: agent, admin, system, hub")
-    
+
     # Timestamp
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
@@ -269,4 +279,60 @@ class NodeHistory(Base):
         Index('ix_node_history_node_event', 'node_id', 'event'),
         Index('ix_node_history_event_created', 'event', 'created_at'),
         Index('ix_node_history_hostname_created', 'hostname', 'created_at'),
+    )
+
+
+class TrustHistory(Base):
+    """
+    Trust History table - tracks trust score changes over time
+    Used for trend analysis and anomaly detection
+    """
+    __tablename__ = "trust_history"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # Node reference
+    node_id = Column(Integer, nullable=False, index=True,
+                     comment="Reference to nodes.id")
+    hostname = Column(String(63), nullable=False,
+                      comment="Hostname for quick reference")
+
+    # Trust metrics
+    trust_score = Column(Float, nullable=False,
+                         comment="Trust score at this point in time")
+    previous_score = Column(Float, nullable=True,
+                            comment="Previous trust score for delta calculation")
+
+    # Risk assessment
+    risk_level = Column(String(20), nullable=False,
+                        comment="Risk level: low, medium, high, critical")
+    risk_factors = Column(Text, nullable=True,
+                          comment="JSON array of risk factors detected")
+
+    # Factor breakdown (for analysis)
+    device_health_score = Column(Float, nullable=True,
+                                 comment="CPU/Memory/Disk health component")
+    security_score = Column(Float, nullable=True,
+                            comment="Security events component")
+    behavior_score = Column(Float, nullable=True,
+                            comment="Behavioral analysis component")
+    role_score = Column(Float, nullable=True,
+                        comment="Role-based base score")
+
+    # Raw metrics snapshot
+    metrics_snapshot = Column(Text, nullable=True,
+                              comment="JSON snapshot of raw metrics at calculation time")
+
+    # Action taken (if any)
+    action_taken = Column(String(50), nullable=True,
+                          comment="Action: none, warning, rate_limit, suspend, revoke")
+
+    # Timestamp
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    # Indexes
+    __table_args__ = (
+        Index('ix_trust_history_node_created', 'node_id', 'created_at'),
+        Index('ix_trust_history_score', 'trust_score'),
+        Index('ix_trust_history_risk', 'risk_level', 'created_at'),
     )

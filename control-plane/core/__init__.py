@@ -15,6 +15,8 @@ from .node_manager import (
     SERVER_PUBLIC_KEY,
     SERVER_ENDPOINT
 )
+from .trust_engine import trust_engine, TrustEngine
+from .wireguard_service import wireguard_service
 
 __all__ = [
     # IPAM
@@ -35,4 +37,9 @@ __all__ = [
     "SERVER_IP",
     "SERVER_PUBLIC_KEY",
     "SERVER_ENDPOINT",
+    # Trust Engine
+    "trust_engine",
+    "TrustEngine",
+    # WireGuard Service
+    "wireguard_service",
 ]

@@ -109,7 +109,7 @@ class NodeManager:
                 existing_by_key.agent_version = agent_version
             db.commit()
             logger.info(f"Node re-registered: {existing_by_key.hostname}")
-            
+
             # Record re-registration in history
             self._record_history(
                 db, existing_by_key, "re-registered",
@@ -180,7 +180,7 @@ class NodeManager:
             )
 
             logger.info(f"New node registered: {hostname} -> {overlay_ip}")
-            
+
             # Record registration in history
             self._record_history(
                 db, new_node, "registered",

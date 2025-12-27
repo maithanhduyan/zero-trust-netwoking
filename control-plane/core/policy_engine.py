@@ -110,7 +110,13 @@ class PolicyEngine:
         target_node: Node
     ) -> List[FirewallRule]:
         """
-        Generate ACL rules for a specific node
+        Generate ACL rules for a specific node based on policies and trust score
+
+        Trust-based access control:
+        - Trust >= 0.8: Full access per policies
+        - Trust >= 0.6: Normal access per policies
+        - Trust >= 0.4: Limited access (reduce allowed ports)
+        - Trust < 0.4: No access (suspended)
 
         Args:
             db: Database session
@@ -122,6 +128,11 @@ class PolicyEngine:
         rules = []
         policies = self.get_policies(db)
         active_nodes = self.get_active_nodes(db)
+
+        # Trust thresholds
+        TRUST_FULL = 0.8
+        TRUST_NORMAL = 0.6
+        TRUST_LIMITED = 0.4
 
         for policy in policies:
             # Check if this policy applies to target node
@@ -138,18 +149,43 @@ class PolicyEngine:
                 if policy["src"] != src_node.role and policy["src"] != "*":
                     continue
 
+                # === TRUST-BASED ACCESS CONTROL ===
+                src_trust = src_node.trust_score if src_node.trust_score is not None else 1.0
+
+                # Skip suspended/revoked nodes
+                if src_trust < TRUST_LIMITED:
+                    logger.debug(
+                        f"Skipping ACL for {src_node.hostname}: trust too low ({src_trust:.2f})"
+                    )
+                    continue
+
+                # Limited trust: only allow essential services (SSH for ops)
+                if src_trust < TRUST_NORMAL:
+                    # Only allow SSH from ops role for emergency access
+                    if not (src_node.role == "ops" and policy["port"] == 22):
+                        logger.debug(
+                            f"Limiting ACL for {src_node.hostname}: trust={src_trust:.2f}, "
+                            f"skipping port {policy['port']}"
+                        )
+                        continue
+
                 # Extract IP without CIDR
                 src_ip = src_node.overlay_ip
                 if src_ip and '/' in src_ip:
                     src_ip = src_ip.split('/')[0]
 
                 if src_ip:
+                    # Add comment with trust info for lower trust nodes
+                    comment = policy.get("name", f"{src_node.role}->{target_node.role}")
+                    if src_trust < TRUST_FULL:
+                        comment = f"{comment} [trust:{src_trust:.2f}]"
+
                     rule = FirewallRule(
                         src_ip=src_ip,
                         port=policy["port"],
                         proto=policy["proto"],
                         action=policy["action"],
-                        comment=policy.get("name", f"{src_node.role}->{target_node.role}")
+                        comment=comment
                     )
                     rules.append(rule)
 

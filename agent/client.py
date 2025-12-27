@@ -164,13 +164,16 @@ class ControlPlaneClient:
         agent_version: Optional[str] = None,
         uptime_seconds: Optional[int] = None,
         cpu_percent: Optional[float] = None,
-        memory_percent: Optional[float] = None
+        memory_percent: Optional[float] = None,
+        disk_percent: Optional[float] = None,
+        security_events: Optional[Dict[str, Any]] = None,
+        network_stats: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Send heartbeat to Control Plane
+        Send heartbeat to Control Plane with security metrics
 
         Returns:
-            Heartbeat response with config_changed flag
+            Heartbeat response with config_changed flag and trust_score
         """
         data = {
             "hostname": hostname,
@@ -185,6 +188,12 @@ class ControlPlaneClient:
             data["cpu_percent"] = cpu_percent
         if memory_percent is not None:
             data["memory_percent"] = memory_percent
+        if disk_percent is not None:
+            data["disk_percent"] = disk_percent
+        if security_events is not None:
+            data["security_events"] = security_events
+        if network_stats is not None:
+            data["network_stats"] = network_stats
 
         return self._make_request("POST", "/heartbeat", data)
 

@@ -17,14 +17,3 @@ Dự án này xây dựng **Zero Trust Network cấp doanh nghiệp** với các
 | Feature | Technology | Status |
 |---------|------------|--------|
 | **VPN Mesh** | WireGuard (self-hosted) | ✅ |
-| **Automation** | Ansible | ✅ |
-| **Containerization** | Docker | ✅ |
-| **High Availability** | Multi-Hub + Full Mesh | ✅ |
-| **Security Hardening** | UFW + Fail2ban + Auditd | ✅ |
-| **SSH Zero Trust** | WireGuard-only access | ✅ |
-
-## 🏗️ Kiến trúc
-
-**Built with ❤️ for Zero Trust Security**
-
-*100% tự chủ - Không phụ thuộc bên thứ 3*

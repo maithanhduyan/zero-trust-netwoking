@@ -29,6 +29,7 @@ from schemas.base import BaseResponse, ErrorResponse
 from core.node_manager import node_manager
 from core.policy_engine import policy_engine
 from core.ipam import ipam_service
+from core.trust_engine import trust_engine
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -313,7 +314,7 @@ async def heartbeat(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Process heartbeat from Agent"""
+    """Process heartbeat from Agent with trust calculation"""
     node = node_manager.get_node_by_public_key(db, heartbeat_in.public_key)
 
     if not node:
@@ -334,6 +335,39 @@ async def heartbeat(
         heartbeat_in.agent_version
     )
 
+    # Build metrics for trust calculation
+    metrics = {
+        "cpu_percent": heartbeat_in.cpu_percent or 0,
+        "memory_percent": heartbeat_in.memory_percent or 0,
+        "disk_percent": heartbeat_in.disk_percent or 0,
+        "security_events": heartbeat_in.security_events or {},
+        "network_stats": heartbeat_in.network_stats or {}
+    }
+
+    # Calculate and update trust score
+    trust_score = node.trust_score or 1.0
+    risk_level = node.risk_level or "low"
+    action_taken = "none"
+
+    try:
+        trust_score, action_taken = trust_engine.update_node_trust(
+            db=db,
+            node=node,
+            metrics=metrics,
+            record_history=True
+        )
+        risk_level = node.risk_level or "low"
+
+        # Log significant trust events
+        if action_taken != 'none':
+            logger.warning(
+                f"Trust action for {node.hostname}: {action_taken} "
+                f"(score: {trust_score:.2f}, risk: {risk_level})"
+            )
+
+    except Exception as e:
+        logger.error(f"Trust calculation failed for {node.hostname}: {e}")
+
     # Check if config has changed
     config_changed = False  # TODO: Implement config change detection
 
@@ -341,7 +375,10 @@ async def heartbeat(
         status="ok",
         config_changed=config_changed,
         current_config_version=node.config_version,
-        message=f"Heartbeat received from {node.hostname}"
+        message=f"Heartbeat received from {node.hostname}",
+        trust_score=trust_score,
+        risk_level=risk_level,
+        action_taken=action_taken if action_taken != 'none' else None
     )
 
 

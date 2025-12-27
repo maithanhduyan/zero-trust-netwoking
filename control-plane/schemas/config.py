@@ -127,16 +127,26 @@ class AgentConfig(BaseModel):
 
 
 class HeartbeatRequest(BaseModel):
-    """Heartbeat request from Agent"""
+    """Heartbeat request from Agent with security metrics"""
     hostname: str
     public_key: str
     agent_version: Optional[str] = None
     uptime_seconds: Optional[int] = None
 
-    # Optional metrics
+    # Resource metrics
     cpu_percent: Optional[float] = None
     memory_percent: Optional[float] = None
     disk_percent: Optional[float] = None
+
+    # Security and network metrics for trust calculation
+    security_events: Optional[dict] = Field(
+        None,
+        description="Security events collected by agent"
+    )
+    network_stats: Optional[dict] = Field(
+        None,
+        description="Network connection statistics"
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -147,16 +157,40 @@ class HeartbeatRequest(BaseModel):
                 "uptime_seconds": 86400,
                 "cpu_percent": 25.5,
                 "memory_percent": 60.0,
-                "disk_percent": 45.0
+                "disk_percent": 45.0,
+                "security_events": {
+                    "summary": {
+                        "risk_level": "low",
+                        "risk_factors": []
+                    }
+                },
+                "network_stats": {
+                    "connections": {"total": 50}
+                }
             }
         }
     )
 
 
 class HeartbeatResponse(BaseModel):
-    """Heartbeat response to Agent"""
+    """Heartbeat response to Agent with trust information"""
     status: str = "ok"
     config_changed: bool = False
     current_config_version: int
     server_time: datetime = Field(default_factory=datetime.utcnow)
     message: Optional[str] = None
+
+    # Trust information
+    trust_score: Optional[float] = Field(
+        None,
+        ge=0.0, le=1.0,
+        description="Current trust score (0-1)"
+    )
+    risk_level: Optional[str] = Field(
+        None,
+        description="Current risk level"
+    )
+    action_taken: Optional[str] = Field(
+        None,
+        description="Action taken based on trust score"
+    )

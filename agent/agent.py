@@ -20,6 +20,8 @@ from wireguard.manager import WireGuardManager
 from wireguard.config_builder import WireGuardConfigBuilder
 from firewall.iptables import IPTablesManager
 from collectors.host_info import collect_host_info
+from collectors.security_events import SecurityEventsCollector
+from collectors.network_stats import NetworkStatsCollector
 
 # Configure logging
 logging.basicConfig(
@@ -63,12 +65,15 @@ class ZeroTrustAgent:
         self.wg_manager = WireGuardManager(interface="wg0", config_dir=config_dir)
         self.wg_builder = WireGuardConfigBuilder()
         self.firewall = IPTablesManager(interface="wg0")
+        self.security_collector = SecurityEventsCollector()
+        self.network_collector = NetworkStatsCollector()
 
         # State tracking
         self.registered = False
         self.overlay_ip: Optional[str] = None
         self.current_config_version = 0
         self.public_key: Optional[str] = None
+        self.current_trust_score: float = 1.0
 
         # Setup signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -201,12 +206,48 @@ class ZeroTrustAgent:
         self.firewall.apply_rules(acl_rules)
 
     def send_heartbeat(self) -> bool:
-        """Send heartbeat to Control Plane"""
+        """Send heartbeat to Control Plane with security metrics"""
         try:
+            # Collect resource usage
+            cpu_percent, memory_percent, disk_percent = self._collect_resource_usage()
+
+            # Collect security events
+            security_events = self.security_collector.collect_all()
+
+            # Collect network stats
+            network_stats = self.network_collector.collect_all()
+
+            # Calculate uptime
+            uptime_seconds = self._get_uptime()
+
             response = self.client.heartbeat(
                 hostname=self.hostname,
-                public_key=self.public_key
+                public_key=self.public_key,
+                agent_version="1.0.0",
+                uptime_seconds=uptime_seconds,
+                cpu_percent=cpu_percent,
+                memory_percent=memory_percent,
+                disk_percent=disk_percent,
+                security_events=security_events,
+                network_stats=network_stats
             )
+
+            # Track trust score
+            if 'trust_score' in response:
+                new_score = response['trust_score']
+                if new_score != self.current_trust_score:
+                    logger.info(f"Trust score updated: {self.current_trust_score:.2f} -> {new_score:.2f}")
+                    self.current_trust_score = new_score
+
+                    # Warn if trust score is low
+                    if new_score < 0.5:
+                        logger.warning(f"LOW TRUST SCORE: {new_score:.2f} - Node may be suspended")
+                    if new_score < 0.3:
+                        logger.error(f"CRITICAL TRUST SCORE: {new_score:.2f} - Node may be revoked")
+
+            # Log risk level if present
+            if response.get('risk_level') and response['risk_level'] != 'low':
+                logger.warning(f"Risk level: {response['risk_level']}")
 
             # Check if config changed
             if response.get("config_changed"):
@@ -218,6 +259,64 @@ class ZeroTrustAgent:
         except Exception as e:
             logger.error(f"Heartbeat failed: {e}")
             return False
+
+    def _collect_resource_usage(self) -> tuple:
+        """Collect CPU, memory, and disk usage"""
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=1)
+            memory = psutil.virtual_memory().percent
+            disk = psutil.disk_usage('/').percent
+            return cpu, memory, disk
+        except ImportError:
+            # Fallback to reading from /proc
+            return self._collect_resource_usage_fallback()
+
+    def _collect_resource_usage_fallback(self) -> tuple:
+        """Fallback resource collection without psutil"""
+        cpu = 0.0
+        memory = 0.0
+        disk = 0.0
+
+        try:
+            # CPU from /proc/stat (simple average)
+            with open('/proc/loadavg', 'r') as f:
+                load = float(f.read().split()[0])
+                import os
+                cpu = (load / os.cpu_count()) * 100
+
+            # Memory from /proc/meminfo
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split(':')
+                    if len(parts) == 2:
+                        key = parts[0].strip()
+                        value = int(parts[1].strip().split()[0])
+                        meminfo[key] = value
+                total = meminfo.get('MemTotal', 1)
+                available = meminfo.get('MemAvailable', 0)
+                memory = ((total - available) / total) * 100
+
+            # Disk usage
+            import os
+            stat = os.statvfs('/')
+            total = stat.f_blocks * stat.f_frsize
+            free = stat.f_bfree * stat.f_frsize
+            disk = ((total - free) / total) * 100
+
+        except Exception as e:
+            logger.warning(f"Failed to collect resource usage: {e}")
+
+        return cpu, memory, disk
+
+    def _get_uptime(self) -> int:
+        """Get system uptime in seconds"""
+        try:
+            with open('/proc/uptime', 'r') as f:
+                return int(float(f.read().split()[0]))
+        except Exception:
+            return 0
 
     def run(self):
         """Main daemon loop"""
