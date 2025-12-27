@@ -12,5 +12,6 @@
     },
     "[python]": {
         "editor.defaultFormatter": "ms-python.python"
-    }
+    },
+    "remote.autoForwardPorts": true
 }
