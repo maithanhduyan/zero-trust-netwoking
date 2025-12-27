@@ -1,10 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 #  ZERO TRUST NETWORK - NODE AGENT INSTALLER (Production Ready)
-#  
+#
 #  Cài đặt Agent + WireGuard Client trên Ubuntu/Debian Node
 #  Phiên bản: 2.1.0
-#  
+#
 #  Usage:
 #    curl -sL https://raw.githubusercontent.com/maithanhduyan/zero-trust-netwoking/main/scripts/node/install.sh | \
 #      sudo HUB_URL=http://hub-ip:8000 ROLE=app bash
@@ -139,7 +139,7 @@ install_dependencies() {
         wireguard-tools \
         iptables \
         >/dev/null 2>&1
-    
+
     success "Dependencies đã cài đặt"
 }
 
@@ -194,7 +194,7 @@ register_with_hub() {
     AGENT_VERSION="2.1.0"
 
     log "Gửi đăng ký đến Hub..."
-    
+
     REGISTER_DATA=$(cat << EOF
 {
     "hostname": "${NODE_HOSTNAME}",
@@ -211,9 +211,20 @@ EOF
         -H "Content-Type: application/json" \
         -d "$REGISTER_DATA")
 
-    # Check for errors
-    if echo "$RESPONSE" | grep -q '"error"'; then
-        ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error // .detail // "Unknown error"')
+    # Debug: show response if verbose
+    [ "${VERBOSE:-}" = "1" ] && log "API Response: $RESPONSE"
+
+    # Check for errors (multiple formats)
+    # FastAPI validation: {"detail": [{"msg": "..."}]}
+    # Custom error: {"error": "...", "detail": "..."}
+    if echo "$RESPONSE" | grep -qE '"error"|"detail":\s*\['; then
+        # Try to extract error message
+        if echo "$RESPONSE" | grep -q '"detail":\s*\['; then
+            # FastAPI validation error format
+            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.detail[0].msg // .detail[0].message // "Validation error"' 2>/dev/null)
+        else
+            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error // .detail // "Unknown error"' 2>/dev/null)
+        fi
         error "Đăng ký thất bại: $ERROR_MSG"
     fi
 
@@ -358,7 +369,7 @@ start_wireguard() {
 
     if wg show wg0 >/dev/null 2>&1; then
         success "WireGuard đang chạy"
-        
+
         # Test connectivity to Hub
         HUB_OVERLAY_IP="10.10.0.1"
         if ping -c 1 -W 3 "$HUB_OVERLAY_IP" >/dev/null 2>&1; then
@@ -489,7 +500,7 @@ show_summary() {
 # ==============================================================================
 main() {
     print_banner
-    
+
     preflight_checks
     install_dependencies
     setup_directories

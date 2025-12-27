@@ -12,6 +12,7 @@ import logging
 from database.models import Node, NodeStatus, AuditLog
 from config import settings
 from .ipam import ipam_service
+from .wireguard_service import wireguard_service
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,14 @@ class NodeManager:
                 existing_by_key.agent_version = agent_version
             db.commit()
             logger.info(f"Node re-registered: {existing_by_key.hostname}")
+
+            # Ensure peer exists in WireGuard (for re-registration after Hub restart)
+            if existing_by_key.status == NodeStatus.ACTIVE.value:
+                overlay_ip_only = existing_by_key.overlay_ip.split('/')[0]
+                if not wireguard_service.peer_exists(public_key):
+                    if wireguard_service.add_peer(public_key, f"{overlay_ip_only}/32"):
+                        logger.info(f"Re-added WireGuard peer for {existing_by_key.hostname}")
+
             return existing_by_key, False
 
         # Check for existing node by hostname
@@ -132,6 +141,15 @@ class NodeManager:
             )
 
             logger.info(f"New node registered: {hostname} -> {overlay_ip}")
+
+            # Auto-add peer to WireGuard if node is active
+            if new_node.status == NodeStatus.ACTIVE.value:
+                overlay_ip_only = overlay_ip.split('/')[0]
+                if wireguard_service.add_peer(public_key, f"{overlay_ip_only}/32"):
+                    logger.info(f"Added WireGuard peer for {hostname}")
+                else:
+                    logger.warning(f"Failed to add WireGuard peer for {hostname}")
+
             return new_node, True
 
         except IntegrityError as e:
