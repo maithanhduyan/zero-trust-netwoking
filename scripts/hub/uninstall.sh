@@ -1,53 +1,75 @@
 #!/bin/bash
 # ==============================================================================
-# ZERO TRUST NETWORK - HUB UNINSTALLER
-# Removes Control Plane and WireGuard Hub
+# ZERO TRUST NETWORK - HUB UNINSTALLER (Production)
+# Removes Control Plane and WireGuard Hub completely
 # ==============================================================================
 #
 # Usage:
 #   sudo ./uninstall.sh              # Interactive mode
 #   sudo ./uninstall.sh --force      # Skip confirmations
 #   sudo ./uninstall.sh --dry-run    # Preview only
+#   sudo ./uninstall.sh --keep-keys  # Keep WireGuard keys for reinstall
 #
 # ==============================================================================
 
 set -e
 
-# Load common library
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../lib/common.sh" 2>/dev/null || {
-    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-    log() { echo -e "${BLUE}[INFO]${NC} $1"; }
-    success() { echo -e "${GREEN}[OK]${NC} $1"; }
-    warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-    error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
-}
+# Configuration paths
+INSTALL_DIR="/opt/zero-trust"
+CONFIG_DIR="/etc/zero-trust"
+DATA_DIR="/var/lib/zero-trust"
+LOG_DIR="/var/log/zero-trust"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log()     { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $1"; }
+success() { echo -e "${GREEN}[$(date '+%H:%M:%S')] ✓${NC} $1"; }
+warn()    { echo -e "${YELLOW}[$(date '+%H:%M:%S')] ⚠${NC} $1"; }
 
 # Parse arguments
 FORCE=false
 DRY_RUN=false
+KEEP_KEYS=false
 for arg in "$@"; do
     case $arg in
-        --force) FORCE=true ;;
-        --dry-run) DRY_RUN=true ;;
+        --force|-f) FORCE=true ;;
+        --dry-run|-n) DRY_RUN=true ;;
+        --keep-keys|-k) KEEP_KEYS=true ;;
     esac
 done
+
+run_cmd() {
+    local desc="$1"
+    local cmd="$2"
+    if [ "$DRY_RUN" = "true" ]; then
+        echo -e "${YELLOW}[DRY-RUN]${NC} Would: $desc"
+    else
+        log "$desc"
+        eval "$cmd" 2>/dev/null || true
+    fi
+}
 
 # Banner
 echo ""
 echo -e "${RED}╔══════════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${RED}║              ⚠️  ZERO TRUST HUB UNINSTALLER                          ║${NC}"
 echo -e "${RED}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${RED}║  This will remove:                                                   ║${NC}"
-echo -e "${RED}║  - Control Plane API service                                         ║${NC}"
-echo -e "${RED}║  - WireGuard Hub configuration                                       ║${NC}"
-echo -e "${RED}║  - Database and all node registrations                               ║${NC}"
+echo -e "${RED}║  Sẽ xóa:                                                             ║${NC}"
+echo -e "${RED}║  • Control Plane API service và systemd unit                         ║${NC}"
+echo -e "${RED}║  • WireGuard Hub (wg0) và cấu hình                                   ║${NC}"
+echo -e "${RED}║  • Database và tất cả node registrations                             ║${NC}"
+echo -e "${RED}║  • Log files và config files                                         ║${NC}"
 echo -e "${RED}╚══════════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
 # Confirmation
 if [ "$FORCE" != "true" ] && [ "$DRY_RUN" != "true" ]; then
-    echo -e "${YELLOW}⚠️  WARNING: Tất cả nodes sẽ mất kết nối với Hub!${NC}"
+    echo -e "${YELLOW}⚠️  CẢNH BÁO: Tất cả nodes sẽ mất kết nối với Hub!${NC}"
     echo ""
     read -p "Nhập 'UNINSTALL' để xác nhận: " confirm
     if [ "$confirm" != "UNINSTALL" ]; then
@@ -56,121 +78,153 @@ if [ "$FORCE" != "true" ] && [ "$DRY_RUN" != "true" ]; then
     fi
 fi
 
-run_cmd() {
-    if [ "$DRY_RUN" = "true" ]; then
-        echo -e "${YELLOW}[DRY-RUN]${NC} $1"
-    else
-        eval "$1"
-    fi
-}
-
 # ==============================================================================
 # PHASE 1: STOP SERVICES
 # ==============================================================================
 echo ""
-log "Phase 1: Dừng services..."
+log "━━━ PHASE 1: DỪNG SERVICES ━━━"
 
-# Stop Control Plane
+# Kill any running uvicorn processes
+if pgrep -f "uvicorn.*main:app" >/dev/null 2>&1; then
+    run_cmd "Dừng uvicorn processes" "pkill -f 'uvicorn.*main:app'"
+    success "Đã dừng uvicorn"
+fi
+
+# Stop Control Plane service
 if systemctl is-active --quiet zero-trust-control-plane 2>/dev/null; then
-    run_cmd "systemctl stop zero-trust-control-plane"
-    run_cmd "systemctl disable zero-trust-control-plane 2>/dev/null || true"
+    run_cmd "Dừng Control Plane service" "systemctl stop zero-trust-control-plane"
     success "Đã dừng Control Plane"
-else
-    log "Control Plane không chạy"
+fi
+
+if systemctl is-enabled --quiet zero-trust-control-plane 2>/dev/null; then
+    run_cmd "Disable Control Plane service" "systemctl disable zero-trust-control-plane"
 fi
 
 # Stop WireGuard
 if systemctl is-active --quiet wg-quick@wg0 2>/dev/null; then
-    run_cmd "systemctl stop wg-quick@wg0"
-    run_cmd "systemctl disable wg-quick@wg0 2>/dev/null || true"
+    run_cmd "Dừng WireGuard" "systemctl stop wg-quick@wg0"
     success "Đã dừng WireGuard"
-else
-    log "WireGuard không chạy"
+fi
+
+if systemctl is-enabled --quiet wg-quick@wg0 2>/dev/null; then
+    run_cmd "Disable WireGuard" "systemctl disable wg-quick@wg0"
 fi
 
 # ==============================================================================
-# PHASE 2: REMOVE CONFIGURATION FILES
+# PHASE 2: REMOVE SYSTEMD FILES
 # ==============================================================================
 echo ""
-log "Phase 2: Xóa cấu hình..."
+log "━━━ PHASE 2: XÓA SYSTEMD FILES ━━━"
 
-# Remove systemd service file
-if [ -f /etc/systemd/system/zero-trust-control-plane.service ]; then
-    run_cmd "rm -f /etc/systemd/system/zero-trust-control-plane.service"
-    run_cmd "systemctl daemon-reload"
-    success "Đã xóa systemd service"
-fi
+run_cmd "Xóa Control Plane service file" "rm -f /etc/systemd/system/zero-trust-control-plane.service"
+run_cmd "Reload systemd" "systemctl daemon-reload"
+success "Đã xóa systemd files"
 
-# Remove WireGuard config (backup first)
+# ==============================================================================
+# PHASE 3: BACKUP & REMOVE WIREGUARD
+# ==============================================================================
+echo ""
+log "━━━ PHASE 3: WIREGUARD ━━━"
+
 if [ -d /etc/wireguard ]; then
     if [ "$DRY_RUN" != "true" ]; then
         BACKUP_DIR="/root/wireguard-backup-$(date +%Y%m%d_%H%M%S)"
         mkdir -p "$BACKUP_DIR"
         cp -r /etc/wireguard/* "$BACKUP_DIR/" 2>/dev/null || true
-        log "Backup WireGuard config tại: $BACKUP_DIR"
+        log "Đã backup WireGuard tại: $BACKUP_DIR"
     fi
-    run_cmd "rm -rf /etc/wireguard/*"
-    success "Đã xóa WireGuard config"
+    
+    if [ "$KEEP_KEYS" = "true" ]; then
+        run_cmd "Xóa WireGuard config (giữ keys)" "rm -f /etc/wireguard/wg0.conf"
+        log "Đã giữ lại keys trong /etc/wireguard/"
+    else
+        run_cmd "Xóa tất cả WireGuard config" "rm -rf /etc/wireguard/*"
+    fi
+    success "Đã xử lý WireGuard config"
 fi
 
 # ==============================================================================
-# PHASE 3: REMOVE APPLICATION DATA
+# PHASE 4: REMOVE APPLICATION DATA
 # ==============================================================================
 echo ""
-log "Phase 3: Xóa dữ liệu ứng dụng..."
+log "━━━ PHASE 4: XÓA DỮ LIỆU ỨNG DỤNG ━━━"
 
-# Possible install locations
-INSTALL_DIRS=(
-    "/opt/zero-trust-control-plane"
-    "/home/zero-trust-netwoking"
-)
+# Remove install directory
+if [ -d "$INSTALL_DIR" ]; then
+    run_cmd "Xóa thư mục cài đặt $INSTALL_DIR" "rm -rf $INSTALL_DIR"
+    success "Đã xóa $INSTALL_DIR"
+fi
 
-for dir in "${INSTALL_DIRS[@]}"; do
-    if [ -d "$dir" ]; then
-        # Remove database
-        if [ -f "$dir/control-plane/zerotrust.db" ]; then
-            run_cmd "rm -f $dir/control-plane/zerotrust.db"
-            success "Đã xóa database"
-        fi
-        # Remove .env
-        if [ -f "$dir/control-plane/.env" ]; then
-            run_cmd "rm -f $dir/control-plane/.env"
-            success "Đã xóa .env config"
-        fi
+# Also check legacy paths
+for legacy_dir in "/home/zero-trust-netwoking" "/home/zero-trust-networking"; do
+    if [ -d "$legacy_dir" ]; then
+        run_cmd "Xóa legacy directory $legacy_dir" "rm -rf $legacy_dir"
     fi
 done
 
+# Remove config directory
+if [ -d "$CONFIG_DIR" ]; then
+    run_cmd "Xóa config $CONFIG_DIR" "rm -rf $CONFIG_DIR"
+fi
+
+# Remove data directory
+if [ -d "$DATA_DIR" ]; then
+    run_cmd "Xóa data $DATA_DIR" "rm -rf $DATA_DIR"
+fi
+
+# Remove log directory
+if [ -d "$LOG_DIR" ]; then
+    run_cmd "Xóa logs $LOG_DIR" "rm -rf $LOG_DIR"
+fi
+
+# Remove ztctl
+run_cmd "Xóa ztctl CLI" "rm -f /usr/local/bin/ztctl"
+run_cmd "Xóa ztctl config" "rm -rf /etc/zerotrust"
+
+# Remove logrotate config
+run_cmd "Xóa logrotate config" "rm -f /etc/logrotate.d/zero-trust"
+
+success "Đã xóa dữ liệu ứng dụng"
+
 # ==============================================================================
-# PHASE 4: CLEANUP IPTABLES
+# PHASE 5: CLEANUP IPTABLES
 # ==============================================================================
 echo ""
-log "Phase 4: Dọn dẹp iptables..."
+log "━━━ PHASE 5: DỌN IPTABLES ━━━"
 
-# Remove WireGuard iptables rules
-run_cmd "iptables -D FORWARD -i wg0 -j ACCEPT 2>/dev/null || true"
-run_cmd "iptables -D FORWARD -o wg0 -j ACCEPT 2>/dev/null || true"
-run_cmd "iptables -D FORWARD -i wg0 -o wg0 -j ACCEPT 2>/dev/null || true"
-run_cmd "iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null || true"
-success "Đã dọn iptables rules"
+run_cmd "Xóa FORWARD rules cho wg0" "iptables -D FORWARD -i wg0 -j ACCEPT"
+run_cmd "Xóa FORWARD rules cho wg0" "iptables -D FORWARD -o wg0 -j ACCEPT"
+run_cmd "Xóa NAT MASQUERADE" "iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE"
+run_cmd "Xóa NAT MASQUERADE ens3" "iptables -t nat -D POSTROUTING -o ens3 -j MASQUERADE"
+
+success "Đã dọn iptables"
 
 # ==============================================================================
-# PHASE 5: SUMMARY
+# SUMMARY
 # ==============================================================================
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
 if [ "$DRY_RUN" = "true" ]; then
     echo -e "${GREEN}║              DRY-RUN HOÀN TẤT - Không có gì bị xóa                  ║${NC}"
 else
-    echo -e "${GREEN}║              ✅ HUB ĐÃ ĐƯỢC GỠ CÀI ĐẶT                               ║${NC}"
+    echo -e "${GREEN}║              ✅ HUB ĐÃ GỠ CÀI ĐẶT THÀNH CÔNG                        ║${NC}"
 fi
 echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║                                                                      ║${NC}"
+echo -e "${GREEN}║${NC}"
 echo -e "${GREEN}║${NC}  Đã gỡ bỏ:"
-echo -e "${GREEN}║${NC}    - Control Plane service"
-echo -e "${GREEN}║${NC}    - WireGuard Hub"
-echo -e "${GREEN}║${NC}    - Database & cấu hình"
+echo -e "${GREEN}║${NC}  ├─ Control Plane service"
+echo -e "${GREEN}║${NC}  ├─ WireGuard Hub (wg0)"
+echo -e "${GREEN}║${NC}  ├─ Database & node registrations"
+echo -e "${GREEN}║${NC}  ├─ Log files"
+echo -e "${GREEN}║${NC}  └─ ztctl CLI"
+echo -e "${GREEN}║${NC}"
+if [ "$KEEP_KEYS" = "true" ]; then
+    echo -e "${GREEN}║${NC}  ${YELLOW}Đã giữ lại WireGuard keys trong /etc/wireguard/${NC}"
+    echo -e "${GREEN}║${NC}"
+fi
+echo -e "${GREEN}║${NC}  Backup WireGuard: ${BACKUP_DIR:-N/A}"
 echo -e "${GREEN}║${NC}"
 echo -e "${GREEN}║${NC}  Để cài đặt lại:"
-echo -e "${GREEN}║${NC}    curl -sL .../scripts/hub/install.sh | sudo bash"
+echo -e "${GREEN}║${NC}  curl -sL .../scripts/hub/install.sh | sudo bash"
 echo -e "${GREEN}║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════╝${NC}"

@@ -1,413 +1,572 @@
 #!/bin/bash
 # ==============================================================================
-#  ZERO TRUST CONTROL PLANE - AUTOMATED INSTALLER
-#  Repository: https://github.com/maithanhduyan/zero-trust-netwoking
-# ==============================================================================
-#
+#  ZERO TRUST NETWORK - HUB INSTALLER (Production Ready)
+#  
+#  Cài đặt Control Plane + WireGuard Hub trên Ubuntu Server
+#  Phiên bản: 2.1.0
+#  
 #  Usage:
-#    curl -sL https://raw.githubusercontent.com/maithanhduyan/zero-trust-netwoking/main/scripts/install.sh | sudo bash
-#
-#    Or download and run:
-#    chmod +x install.sh && sudo ./install.sh
+#    curl -sL https://raw.githubusercontent.com/maithanhduyan/zero-trust-netwoking/main/scripts/hub/install.sh | sudo bash
+#    
+#    Hoặc với cấu hình tùy chỉnh:
+#    sudo HUB_PORT=8000 WG_PORT=51820 ./install.sh
 #
 # ==============================================================================
 
 set -e
 
-# --- CẤU HÌNH ---
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || pwd)"
-INSTALL_DIR="${INSTALL_DIR:-/opt/zero-trust-control-plane}"
+# ==============================================================================
+# CẤU HÌNH MẶC ĐỊNH (có thể override qua environment variables)
+# ==============================================================================
+INSTALL_DIR="${INSTALL_DIR:-/opt/zero-trust}"
 REPO_URL="https://github.com/maithanhduyan/zero-trust-netwoking.git"
 BRANCH="${BRANCH:-main}"
-WG_ADDRESS="10.10.0.1"
-WG_PORT="51820"
-WG_NETWORK="10.10.0.0/24"
 
-# --- MÀU SẮC ---
+# Network Configuration
+WG_OVERLAY_NETWORK="${WG_OVERLAY_NETWORK:-10.10.0.0/24}"
+WG_HUB_IP="${WG_HUB_IP:-10.10.0.1}"
+WG_PORT="${WG_PORT:-51820}"
+HUB_API_PORT="${HUB_API_PORT:-8000}"
+
+# System Configuration
+LOG_DIR="/var/log/zero-trust"
+CONFIG_DIR="/etc/zero-trust"
+DATA_DIR="/var/lib/zero-trust"
+
+# ==============================================================================
+# COLORS & LOGGING
+# ==============================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
+BOLD='\033[1m'
 NC='\033[0m'
 
-# --- HELPER FUNCTIONS ---
-log()     { echo -e "${BLUE}[INFO]${NC} $1"; }
-success() { echo -e "${GREEN}[OK]${NC} $1"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+log()     { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $1"; }
+success() { echo -e "${GREEN}[$(date '+%H:%M:%S')] ✓${NC} $1"; }
+warn()    { echo -e "${YELLOW}[$(date '+%H:%M:%S')] ⚠${NC} $1"; }
+error()   { echo -e "${RED}[$(date '+%H:%M:%S')] ✗${NC} $1"; exit 1; }
 
+# ==============================================================================
+# BANNER
+# ==============================================================================
 print_banner() {
     echo -e "${CYAN}"
     cat << 'EOF'
-╔════════════════════════════════════════════════════════════════════════════════════╗
-║                                                                                    ║
-║   ███████╗███████╗██████╗  ██████╗     ████████╗██████╗ ██╗   ██╗███████╗████████╗ ║
-║   ╚══███╔╝██╔════╝██╔══██╗██╔═══██╗    ╚══██╔══╝██╔══██╗██║   ██║██╔════╝╚══██╔══╝ ║
-║     ███╔╝ █████╗  ██████╔╝██║   ██║       ██║   ██████╔╝██║   ██║███████╗   ██║    ║
-║    ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██╔══██╗██║   ██║╚════██║   ██║    ║
-║   ███████╗███████╗██║  ██║╚██████╔╝       ██║   ██║  ██║╚██████╔╝███████║   ██║    ║
-║   ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝   ╚═╝    ║
-║                                                                                    ║
-║              ZERO TRUST NETWORKING - CONTROL PLANE INSTALLER                       ║
-║                    "Never Trust, Always Verify"                                    ║
-╚════════════════════════════════════════════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                ║
+║   ███████╗███████╗██████╗  ██████╗     ████████╗██████╗ ██╗   ██╗███████╗████████╗║
+║   ╚══███╔╝██╔════╝██╔══██╗██╔═══██╗    ╚══██╔══╝██╔══██╗██║   ██║██╔════╝╚══██╔══╝║
+║     ███╔╝ █████╗  ██████╔╝██║   ██║       ██║   ██████╔╝██║   ██║███████╗   ██║   ║
+║    ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██╔══██╗██║   ██║╚════██║   ██║   ║
+║   ███████╗███████╗██║  ██║╚██████╔╝       ██║   ██║  ██║╚██████╔╝███████║   ██║   ║
+║   ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝   ╚═╝   ║
+║                                                                                ║
+║                    ZERO TRUST NETWORK - HUB INSTALLER                          ║
+║                        "Never Trust, Always Verify"                            ║
+║                              Version 2.1.0                                     ║
+╚════════════════════════════════════════════════════════════════════════════════╝
 EOF
     echo -e "${NC}"
 }
 
 print_phase() {
     echo ""
-    echo -e "${MAGENTA}══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${MAGENTA} PHASE $1: $2${NC}"
-    echo -e "${MAGENTA}══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${MAGENTA}  PHASE $1: $2${NC}"
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
 # ==============================================================================
-# PHASE 0: CHECK ENVIRONMENT
+# PHASE 0: PRE-FLIGHT CHECKS
 # ==============================================================================
-check_environment() {
+preflight_checks() {
     print_phase "0" "KIỂM TRA MÔI TRƯỜNG"
 
     # Check root
     if [ "$(id -u)" -ne 0 ]; then
-        error "Script này cần quyền root. Vui lòng chạy với 'sudo'."
+        error "Script cần quyền root. Chạy với 'sudo $0'"
     fi
-    success "Đang chạy với quyền root"
+    success "Quyền root: OK"
 
     # Check OS
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         log "Hệ điều hành: $PRETTY_NAME"
+        
+        if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
+            warn "Script được thiết kế cho Ubuntu/Debian. Có thể không hoạt động đúng trên $ID"
+        fi
     fi
 
     # Check architecture
     ARCH=$(uname -m)
     log "Kiến trúc: $ARCH"
+    
+    # Check memory
+    TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$TOTAL_MEM" -lt 512 ]; then
+        warn "RAM thấp ($TOTAL_MEM MB). Khuyến nghị tối thiểu 1GB"
+    else
+        success "RAM: ${TOTAL_MEM}MB"
+    fi
 
-    # Install base packages
-    log "Cài đặt các gói cơ bản..."
-    apt-get update -qq
-    apt-get install -y -qq curl git openssl ca-certificates gnupg lsb-release >/dev/null 2>&1
-    success "Các gói cơ bản đã sẵn sàng"
+    # Check disk space
+    FREE_DISK=$(df -m /opt 2>/dev/null | awk 'NR==2{print $4}' || echo "0")
+    if [ "$FREE_DISK" -lt 1024 ]; then
+        warn "Dung lượng trống thấp (${FREE_DISK}MB). Khuyến nghị tối thiểu 2GB"
+    else
+        success "Disk: ${FREE_DISK}MB khả dụng"
+    fi
+
+    # Detect public IP (IPv4 only)
+    PUBLIC_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
+                curl -4 -s --max-time 5 icanhazip.com 2>/dev/null || \
+                curl -4 -s --max-time 5 api.ipify.org 2>/dev/null || \
+                hostname -I | awk '{print $1}')
+    
+    if [ -z "$PUBLIC_IP" ]; then
+        error "Không thể xác định IP public"
+    fi
+    success "IP Public: $PUBLIC_IP"
+
+    # Get default interface
+    DEFAULT_IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+    log "Network interface: $DEFAULT_IFACE"
 }
 
 # ==============================================================================
-# PHASE 1: INSTALL DEPENDENCIES
+# PHASE 1: INSTALL SYSTEM DEPENDENCIES
 # ==============================================================================
-install_docker() {
-    log "Kiểm tra Docker..."
-
-    if command -v docker &> /dev/null; then
-        success "Docker đã có sẵn: $(docker --version)"
-        return
-    fi
-
-    log "Đang cài đặt Docker..."
-    curl -fsSL https://get.docker.com | sh
-
-    # Start Docker
-    systemctl enable docker
-    systemctl start docker
-
-    success "Docker đã cài đặt: $(docker --version)"
-}
-
-install_wireguard() {
-    log "Kiểm tra WireGuard..."
-
-    if command -v wg &> /dev/null; then
-        success "WireGuard đã có sẵn: $(wg --version 2>&1 | head -1)"
-        return
-    fi
-
-    log "Đang cài đặt WireGuard..."
-    apt-get install -y -qq wireguard wireguard-tools >/dev/null 2>&1
-
-    success "WireGuard đã cài đặt"
-}
-
-install_uv() {
-    log "Kiểm tra uv (Python package manager)..."
-
-    if command -v uv &> /dev/null; then
-        success "uv đã có sẵn: $(uv --version)"
-        return
-    fi
-
-    log "Đang cài đặt uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-
-    # Add to PATH for current session
-    export PATH="$HOME/.local/bin:$PATH"
-
-    success "uv đã cài đặt"
-}
-
 install_dependencies() {
     print_phase "1" "CÀI ĐẶT DEPENDENCIES"
 
-    install_docker
-    install_wireguard
-    install_uv
+    log "Cập nhật package lists..."
+    apt-get update -qq
 
-    # Enable IP forwarding
+    log "Cài đặt system packages..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        curl \
+        git \
+        openssl \
+        ca-certificates \
+        gnupg \
+        lsb-release \
+        jq \
+        wireguard \
+        wireguard-tools \
+        python3 \
+        python3-pip \
+        python3-venv \
+        >/dev/null 2>&1
+    
+    success "System packages đã cài đặt"
+
+    # Install uv (fast Python package manager)
+    if ! command -v uv &> /dev/null; then
+        log "Cài đặt uv (Python package manager)..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
+        export PATH="$HOME/.local/bin:$PATH"
+        success "uv đã cài đặt"
+    else
+        success "uv đã có sẵn"
+    fi
+
+    # Enable IP forwarding (permanent)
     log "Bật IP forwarding..."
-    cat > /etc/sysctl.d/99-wireguard.conf << EOF
+    cat > /etc/sysctl.d/99-zero-trust.conf << 'EOF'
+# Zero Trust Network - IP Forwarding
 net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
 EOF
-    sysctl -p /etc/sysctl.d/99-wireguard.conf >/dev/null 2>&1
+    sysctl -p /etc/sysctl.d/99-zero-trust.conf >/dev/null 2>&1
     success "IP forwarding đã bật"
 }
 
 # ==============================================================================
-# PHASE 2: SETUP WIREGUARD HUB
+# PHASE 2: SETUP DIRECTORIES
 # ==============================================================================
-setup_wireguard_hub() {
-    print_phase "2" "CẤU HÌNH WIREGUARD HUB"
+setup_directories() {
+    print_phase "2" "TẠO CẤU TRÚC THƯ MỤC"
 
-    # Create WireGuard directory
+    mkdir -p "$INSTALL_DIR"
+    mkdir -p "$LOG_DIR"
+    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$DATA_DIR"
     mkdir -p /etc/wireguard
+
     chmod 700 /etc/wireguard
+    chmod 755 "$LOG_DIR"
+    chmod 755 "$CONFIG_DIR"
+    chmod 700 "$DATA_DIR"
+
+    success "Đã tạo cấu trúc thư mục:"
+    log "  → Cài đặt:  $INSTALL_DIR"
+    log "  → Logs:     $LOG_DIR"
+    log "  → Config:   $CONFIG_DIR"
+    log "  → Data:     $DATA_DIR"
+}
+
+# ==============================================================================
+# PHASE 3: SETUP WIREGUARD HUB
+# ==============================================================================
+setup_wireguard() {
+    print_phase "3" "CẤU HÌNH WIREGUARD HUB"
 
     # Generate keys if not exists
     if [ ! -f /etc/wireguard/private.key ]; then
-        log "Đang tạo keypair cho Hub..."
+        log "Tạo keypair mới cho Hub..."
         wg genkey | tee /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key
         chmod 600 /etc/wireguard/private.key
+        chmod 644 /etc/wireguard/public.key
         success "Đã tạo keypair mới"
     else
-        success "Keypair đã tồn tại"
+        success "Keypair đã tồn tại, sử dụng lại"
     fi
 
-    # Read keys
     WG_PRIVATE_KEY=$(cat /etc/wireguard/private.key)
     WG_PUBLIC_KEY=$(cat /etc/wireguard/public.key)
 
-    # Get public IPv4 (prefer -4 flag to get IPv4 instead of IPv6)
-    PUBLIC_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
-                curl -4 -s --max-time 5 icanhazip.com 2>/dev/null || \
-                curl -4 -s --max-time 5 ipv4.icanhazip.com 2>/dev/null || \
-                echo "YOUR_PUBLIC_IP")
-
-    # Get default interface
-    DEFAULT_IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
-
-    # Create WireGuard config
     log "Tạo cấu hình WireGuard Hub..."
     cat > /etc/wireguard/wg0.conf << EOF
 # ==============================================================================
-# WIREGUARD HUB CONFIGURATION
-# Generated by Zero Trust Installer - $(date -Iseconds)
+# WIREGUARD HUB - Zero Trust Network
+# Generated: $(date -Iseconds)
 # ==============================================================================
 
 [Interface]
 PrivateKey = ${WG_PRIVATE_KEY}
-Address = ${WG_ADDRESS}/24
+Address = ${WG_HUB_IP}/24
 ListenPort = ${WG_PORT}
 
-# NAT Masquerade - cho phép routing giữa các peers
-PostUp = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${DEFAULT_IFACE} -j MASQUERADE
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${DEFAULT_IFACE} -j MASQUERADE
+# Routing & NAT
+PostUp = iptables -A FORWARD -i wg0 -j ACCEPT
+PostUp = iptables -A FORWARD -o wg0 -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -o ${DEFAULT_IFACE} -j MASQUERADE
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT
+PostDown = iptables -D FORWARD -o wg0 -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o ${DEFAULT_IFACE} -j MASQUERADE
 
 # ==============================================================================
-# PEERS - Các node sẽ được thêm tự động bởi Control Plane
+# PEERS - Được quản lý tự động bởi Control Plane
 # ==============================================================================
 EOF
     chmod 600 /etc/wireguard/wg0.conf
 
-    # Start WireGuard
     log "Khởi động WireGuard..."
     systemctl enable wg-quick@wg0 >/dev/null 2>&1
-    systemctl restart wg-quick@wg0 || systemctl start wg-quick@wg0
+    systemctl stop wg-quick@wg0 2>/dev/null || true
+    systemctl start wg-quick@wg0
 
-    # Verify
     if wg show wg0 >/dev/null 2>&1; then
-        success "WireGuard Hub đang chạy trên ${WG_ADDRESS}:${WG_PORT}"
+        success "WireGuard Hub đang chạy"
+        log "  → Interface: wg0"
+        log "  → Address:   ${WG_HUB_IP}/24"
+        log "  → Port:      ${WG_PORT}/udp"
+        log "  → Public Key: ${WG_PUBLIC_KEY}"
     else
-        warn "Không thể khởi động WireGuard. Kiểm tra logs: journalctl -u wg-quick@wg0"
+        error "Không thể khởi động WireGuard"
     fi
 
-    # Open firewall port
-    if command -v ufw &> /dev/null; then
-        ufw allow ${WG_PORT}/udp comment "WireGuard VPN" >/dev/null 2>&1 || true
-    fi
-
-    # Save public info for later
-    echo "$WG_PUBLIC_KEY" > /etc/wireguard/hub_public_key
-    echo "$PUBLIC_IP" > /etc/wireguard/hub_endpoint
+    echo "$WG_PUBLIC_KEY" > "$CONFIG_DIR/hub.pubkey"
+    echo "$PUBLIC_IP" > "$CONFIG_DIR/hub.endpoint"
 }
 
 # ==============================================================================
-# PHASE 3: SETUP CONTROL PLANE
+# PHASE 4: INSTALL CONTROL PLANE
 # ==============================================================================
-setup_control_plane() {
-    print_phase "3" "CÀI ĐẶT CONTROL PLANE"
+install_control_plane() {
+    print_phase "4" "CÀI ĐẶT CONTROL PLANE"
 
-    # Use current directory if it's the repo, otherwise use INSTALL_DIR
-    if [ -f "$SCRIPT_DIR/../control-plane/main.py" ]; then
-        INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-        log "Sử dụng thư mục hiện tại: $INSTALL_DIR"
-    elif [ -d "$INSTALL_DIR/.git" ]; then
-        log "Cập nhật repository..."
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        log "Cập nhật source code..."
         cd "$INSTALL_DIR"
         git fetch origin
         git reset --hard "origin/$BRANCH"
-    elif [ ! -d "$INSTALL_DIR" ]; then
+    else
         log "Clone repository..."
+        rm -rf "$INSTALL_DIR"
         git clone -b "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
     fi
-
     cd "$INSTALL_DIR"
-    success "Mã nguồn tại: $INSTALL_DIR"
+    success "Source code tại: $INSTALL_DIR"
 
-    # Read WireGuard info
-    WG_PUBLIC_KEY=$(cat /etc/wireguard/public.key 2>/dev/null || echo "REPLACE_WITH_HUB_PUBLIC_KEY")
-    PUBLIC_IP=$(cat /etc/wireguard/hub_endpoint 2>/dev/null || \
-                curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
-                curl -4 -s --max-time 5 ipv4.icanhazip.com 2>/dev/null || \
-                echo "127.0.0.1")
+    log "Tạo Python virtual environment..."
+    cd "$INSTALL_DIR/control-plane"
+    
+    export PATH="$HOME/.local/bin:$PATH"
+    
+    if command -v uv &> /dev/null; then
+        uv venv .venv >/dev/null 2>&1 || python3 -m venv .venv
+        source .venv/bin/activate
+        uv pip install -q \
+            fastapi \
+            "uvicorn[standard]" \
+            sqlalchemy \
+            pydantic \
+            pydantic-settings \
+            python-dotenv \
+            pyyaml \
+            aiofiles \
+            python-multipart \
+            2>/dev/null
+    else
+        python3 -m venv .venv
+        source .venv/bin/activate
+        pip install -q \
+            fastapi \
+            "uvicorn[standard]" \
+            sqlalchemy \
+            pydantic \
+            pydantic-settings \
+            python-dotenv \
+            pyyaml \
+            aiofiles \
+            python-multipart
+    fi
+    success "Python dependencies đã cài đặt"
 
-    # Create .env file for control-plane
+    # Generate secrets
+    SECRET_KEY=$(openssl rand -hex 32)
+    ADMIN_SECRET=$(openssl rand -hex 16)
+
     log "Tạo cấu hình Control Plane..."
     cat > "$INSTALL_DIR/control-plane/.env" << EOF
 # ==============================================================================
-# ZERO TRUST CONTROL PLANE CONFIGURATION
-# Generated by install.sh - $(date -Iseconds)
+# ZERO TRUST CONTROL PLANE - Configuration
+# Generated: $(date -Iseconds)
 # ==============================================================================
 
-# Server
+# === Server ===
 HOST=0.0.0.0
-PORT=8000
+PORT=${HUB_API_PORT}
+DEBUG=false
+LOG_LEVEL=INFO
 
-# Database
-DATABASE_URL=sqlite:///./zerotrust.db
+# === Database ===
+DATABASE_URL=sqlite:///${DATA_DIR}/zerotrust.db
 
-# WireGuard Hub Configuration
+# === WireGuard Hub ===
 HUB_PUBLIC_KEY=${WG_PUBLIC_KEY}
 HUB_ENDPOINT=${PUBLIC_IP}:${WG_PORT}
-OVERLAY_NETWORK=${WG_NETWORK}
+OVERLAY_NETWORK=${WG_OVERLAY_NETWORK}
+WG_CONFIG_PATH=/etc/wireguard/wg0.conf
 
-# Security
-SECRET_KEY=$(openssl rand -hex 32)
+# === Security ===
+SECRET_KEY=${SECRET_KEY}
+ADMIN_SECRET=${ADMIN_SECRET}
+TOKEN_EXPIRE_MINUTES=60
+AGENT_TOKEN_EXPIRE_DAYS=30
+
+# === CORS (for web dashboard) ===
+CORS_ORIGINS=["http://localhost:3000","http://127.0.0.1:3000"]
 EOF
+    chmod 600 "$INSTALL_DIR/control-plane/.env"
 
-    # Update config.py with hub info
-    log "Cập nhật cấu hình Hub..."
-    if [ -f "$INSTALL_DIR/control-plane/config.py" ]; then
-        sed -i "s|REPLACE_WITH_HUB_PUBLIC_KEY|${WG_PUBLIC_KEY}|g" "$INSTALL_DIR/control-plane/config.py" 2>/dev/null || true
-        sed -i "s|hub.example.com:51820|${PUBLIC_IP}:${WG_PORT}|g" "$INSTALL_DIR/control-plane/config.py" 2>/dev/null || true
-    fi
-
-    success "Control Plane đã cấu hình"
+    ln -sf "$INSTALL_DIR/control-plane/.env" "$CONFIG_DIR/control-plane.env"
+    success "Configuration đã tạo"
 }
 
 # ==============================================================================
-# PHASE 4: START SERVICES
+# PHASE 5: CREATE SYSTEMD SERVICE
 # ==============================================================================
-start_services() {
-    print_phase "4" "KHỞI ĐỘNG SERVICES"
+create_systemd_service() {
+    print_phase "5" "TẠO SYSTEMD SERVICE"
 
-    cd "$INSTALL_DIR/control-plane"
+    UVICORN_PATH="$INSTALL_DIR/control-plane/.venv/bin/uvicorn"
 
-    # Install Python dependencies
-    log "Cài đặt Python dependencies..."
-
-    # Check if uv is available
-    if command -v uv &> /dev/null; then
-        uv sync 2>/dev/null || uv pip install -r pyproject.toml 2>/dev/null || {
-            # Fallback: install individually
-            uv pip install fastapi uvicorn sqlalchemy pydantic pyyaml aiofiles python-multipart
-        }
-    else
-        # Use pip if uv not available
-        pip3 install fastapi uvicorn sqlalchemy pydantic pyyaml aiofiles python-multipart
-    fi
-    success "Dependencies đã cài đặt"
-
-    # Create systemd service
-    log "Tạo systemd service..."
     cat > /etc/systemd/system/zero-trust-control-plane.service << EOF
 [Unit]
 Description=Zero Trust Control Plane API
-After=network.target
+Documentation=https://github.com/maithanhduyan/zero-trust-netwoking
+After=network.target wg-quick@wg0.service
+Wants=wg-quick@wg0.service
 
 [Service]
 Type=simple
 User=root
+Group=root
 WorkingDirectory=${INSTALL_DIR}/control-plane
-Environment="PATH=/root/.local/bin:/usr/local/bin:/usr/bin"
-ExecStart=/root/.local/bin/uv run uvicorn main:app --host 0.0.0.0 --port 8000
+Environment="PATH=${INSTALL_DIR}/control-plane/.venv/bin:/usr/local/bin:/usr/bin"
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=${INSTALL_DIR}/control-plane/.env
+
+ExecStart=${UVICORN_PATH} main:app \\
+    --host 0.0.0.0 \\
+    --port ${HUB_API_PORT} \\
+    --workers 2 \\
+    --log-level info \\
+    --access-log
+
 Restart=always
 RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Security Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=${DATA_DIR} ${LOG_DIR} /etc/wireguard
+PrivateTmp=true
+
+# Logging
+StandardOutput=append:${LOG_DIR}/control-plane.log
+StandardError=append:${LOG_DIR}/control-plane.error.log
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # Reload and start
+    # Log rotation
+    cat > /etc/logrotate.d/zero-trust << EOF
+${LOG_DIR}/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}
+EOF
+
     systemctl daemon-reload
-    systemctl enable zero-trust-control-plane
+    systemctl enable zero-trust-control-plane >/dev/null 2>&1
     systemctl restart zero-trust-control-plane
 
-    # Wait for service to start
     log "Đợi Control Plane khởi động..."
-    sleep 3
-
-    # Check health
-    for i in {1..10}; do
-        if curl -s http://localhost:8000/health | grep -q "healthy"; then
-            success "Control Plane API đang chạy"
-            return
+    for i in {1..15}; do
+        if curl -s "http://localhost:${HUB_API_PORT}/health" | grep -q "healthy"; then
+            success "Control Plane đang chạy"
+            return 0
         fi
         sleep 1
     done
 
-    warn "Control Plane chưa respond. Kiểm tra: journalctl -u zero-trust-control-plane -f"
+    warn "Control Plane chưa phản hồi. Kiểm tra: journalctl -u zero-trust-control-plane -f"
 }
 
 # ==============================================================================
-# PHASE 5: VERIFY & SHOW SUMMARY
+# PHASE 6: INSTALL CLI TOOL
+# ==============================================================================
+install_cli() {
+    print_phase "6" "CÀI ĐẶT CLI TOOL"
+
+    if [ -f "$INSTALL_DIR/scripts/ztctl" ]; then
+        cp "$INSTALL_DIR/scripts/ztctl" /usr/local/bin/ztctl
+        chmod +x /usr/local/bin/ztctl
+        success "ztctl CLI đã cài đặt"
+    fi
+
+    mkdir -p /etc/zerotrust
+    ADMIN_SECRET=$(grep ADMIN_SECRET "$INSTALL_DIR/control-plane/.env" | cut -d= -f2)
+    cat > /etc/zerotrust/ztctl.conf << EOF
+# ZTCTL Configuration
+HUB_URL="http://localhost:${HUB_API_PORT}"
+ADMIN_TOKEN="${ADMIN_SECRET}"
+EOF
+    chmod 600 /etc/zerotrust/ztctl.conf
+    success "ztctl config tại /etc/zerotrust/ztctl.conf"
+}
+
+# ==============================================================================
+# PHASE 7: CONFIGURE FIREWALL
+# ==============================================================================
+configure_firewall() {
+    print_phase "7" "CẤU HÌNH FIREWALL"
+
+    if command -v ufw &> /dev/null; then
+        log "Cấu hình UFW..."
+        ufw allow 22/tcp comment "SSH" >/dev/null 2>&1 || true
+        ufw allow ${WG_PORT}/udp comment "WireGuard VPN" >/dev/null 2>&1 || true
+        ufw allow ${HUB_API_PORT}/tcp comment "Zero Trust API" >/dev/null 2>&1 || true
+        
+        if ! ufw status | grep -q "active"; then
+            echo "y" | ufw enable >/dev/null 2>&1 || true
+        fi
+        success "UFW đã cấu hình"
+    else
+        log "UFW không có sẵn, bỏ qua cấu hình firewall"
+    fi
+}
+
+# ==============================================================================
+# PHASE 8: SUMMARY
 # ==============================================================================
 show_summary() {
-    print_phase "5" "HOÀN TẤT"
+    print_phase "8" "HOÀN TẤT"
 
-    # Get info
-    WG_PUBLIC_KEY=$(cat /etc/wireguard/public.key 2>/dev/null || echo "N/A")
-    PUBLIC_IP=$(cat /etc/wireguard/hub_endpoint 2>/dev/null || \
-                curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
-                curl -4 -s --max-time 5 ipv4.icanhazip.com 2>/dev/null || \
-                echo "N/A")
-    WG_STATUS=$(wg show wg0 2>/dev/null | head -5 || echo "Not running")
-    API_STATUS=$(curl -s http://localhost:8000/health 2>/dev/null | grep -o '"status":"[^"]*"' || echo "Not responding")
+    WG_PUBLIC_KEY=$(cat /etc/wireguard/public.key 2>/dev/null)
+    ADMIN_SECRET=$(grep ADMIN_SECRET "$INSTALL_DIR/control-plane/.env" | cut -d= -f2)
 
     echo ""
-    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║              ✅ ZERO TRUST CONTROL PLANE ĐÃ CÀI ĐẶT!                 ║${NC}"
-    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║                                                                      ║${NC}"
-    echo -e "${GREEN}║${NC}  📂 Thư mục cài đặt: ${YELLOW}${INSTALL_DIR}${NC}"
-    echo -e "${GREEN}║${NC}  🌐 Control Plane:   ${YELLOW}http://${PUBLIC_IP}:8000${NC}"
-    echo -e "${GREEN}║${NC}  🔒 WireGuard Hub:   ${YELLOW}${PUBLIC_IP}:${WG_PORT}${NC}"
-    echo -e "${GREEN}║${NC}  🔑 Hub Public Key:  ${YELLOW}${WG_PUBLIC_KEY}${NC}"
-    echo -e "${GREEN}║${NC}  🌍 Overlay Network: ${YELLOW}${WG_NETWORK}${NC}"
-    echo -e "${GREEN}║                                                                      ║${NC}"
-    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║${NC}  API Status: ${API_STATUS}"
-    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║${NC}  ${CYAN}BƯỚC TIẾP THEO:${NC}"
-    echo -e "${GREEN}║${NC}  1. Kiểm tra API: curl http://localhost:8000/health"
-    echo -e "${GREEN}║${NC}  2. Xem logs: journalctl -u zero-trust-control-plane -f"
-    echo -e "${GREEN}║${NC}  3. Triển khai agents lên các node khác"
+    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                                                                              ║${NC}"
+    echo -e "${GREEN}║             ✅ ZERO TRUST HUB ĐÃ CÀI ĐẶT THÀNH CÔNG!                        ║${NC}"
+    echo -e "${GREEN}║                                                                              ║${NC}"
+    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${GREEN}║${NC}                                                                              ${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}📍 THÔNG TIN HUB:${NC}"
+    echo -e "${GREEN}║${NC}  ├─ API Endpoint:    ${CYAN}http://${PUBLIC_IP}:${HUB_API_PORT}${NC}"
+    echo -e "${GREEN}║${NC}  ├─ WireGuard:       ${CYAN}${PUBLIC_IP}:${WG_PORT}${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Hub Public Key:  ${CYAN}${WG_PUBLIC_KEY}${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Overlay Network: ${CYAN}${WG_OVERLAY_NETWORK}${NC}"
+    echo -e "${GREEN}║${NC}  └─ Hub Overlay IP:  ${CYAN}${WG_HUB_IP}${NC}"
     echo -e "${GREEN}║${NC}"
-    echo -e "${GREEN}║${NC}  ${CYAN}QUẢN LÝ SERVICES:${NC}"
-    echo -e "${GREEN}║${NC}  - Control Plane: systemctl {start|stop|restart} zero-trust-control-plane"
-    echo -e "${GREEN}║${NC}  - WireGuard:     systemctl {start|stop|restart} wg-quick@wg0"
+    echo -e "${GREEN}║${NC}  ${BOLD}🔐 ADMIN CREDENTIALS:${NC}"
+    echo -e "${GREEN}║${NC}  └─ Admin Token:     ${YELLOW}${ADMIN_SECRET}${NC}"
     echo -e "${GREEN}║${NC}"
-    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}📂 ĐƯỜNG DẪN:${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Install:         ${INSTALL_DIR}"
+    echo -e "${GREEN}║${NC}  ├─ Config:          ${CONFIG_DIR}"
+    echo -e "${GREEN}║${NC}  ├─ Data:            ${DATA_DIR}"
+    echo -e "${GREEN}║${NC}  └─ Logs:            ${LOG_DIR}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}📋 QUẢN LÝ SERVICES:${NC}"
+    echo -e "${GREEN}║${NC}  ├─ systemctl status zero-trust-control-plane"
+    echo -e "${GREEN}║${NC}  ├─ systemctl restart zero-trust-control-plane"
+    echo -e "${GREEN}║${NC}  ├─ systemctl status wg-quick@wg0"
+    echo -e "${GREEN}║${NC}  └─ journalctl -u zero-trust-control-plane -f"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}🛠 CLI COMMANDS:${NC}"
+    echo -e "${GREEN}║${NC}  ├─ ztctl status              # Xem trạng thái cluster"
+    echo -e "${GREEN}║${NC}  ├─ ztctl node list           # Danh sách nodes"
+    echo -e "${GREEN}║${NC}  ├─ ztctl policy list         # Danh sách policies"
+    echo -e "${GREEN}║${NC}  └─ ztctl sync                # Đồng bộ policies"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}🚀 BƯỚC TIẾP THEO - Cài đặt Agent trên các node:${NC}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${YELLOW}curl -sL https://raw.githubusercontent.com/.../scripts/node/install.sh | \\${NC}"
+    echo -e "${GREEN}║${NC}  ${YELLOW}  sudo HUB_URL=http://${PUBLIC_IP}:${HUB_API_PORT} ROLE=app bash${NC}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
+
+    # Save installation info
+    cat > "$CONFIG_DIR/install-info.txt" << EOF
+# Zero Trust Hub Installation Info
+# Generated: $(date -Iseconds)
+
+PUBLIC_IP=${PUBLIC_IP}
+HUB_API_PORT=${HUB_API_PORT}
+WG_PORT=${WG_PORT}
+WG_PUBLIC_KEY=${WG_PUBLIC_KEY}
+OVERLAY_NETWORK=${WG_OVERLAY_NETWORK}
+HUB_OVERLAY_IP=${WG_HUB_IP}
+INSTALL_DIR=${INSTALL_DIR}
+ADMIN_SECRET=${ADMIN_SECRET}
+EOF
+    chmod 600 "$CONFIG_DIR/install-info.txt"
 }
 
 # ==============================================================================
@@ -415,20 +574,16 @@ show_summary() {
 # ==============================================================================
 main() {
     print_banner
-
-    echo ""
-    echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  ZERO TRUST NETWORKING - Control Plane Installer v2.0${NC}"
-    echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
-    echo ""
-
-    check_environment
+    
+    preflight_checks
     install_dependencies
-    setup_wireguard_hub
-    setup_control_plane
-    start_services
+    setup_directories
+    setup_wireguard
+    install_control_plane
+    create_systemd_service
+    install_cli
+    configure_firewall
     show_summary
 }
 
-# Run
 main "$@"

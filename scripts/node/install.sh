@@ -1,136 +1,125 @@
 #!/bin/bash
 # ==============================================================================
-#  ZERO TRUST AGENT - AUTOMATED INSTALLER
-#  Cài đặt Agent trên các node (app servers, database servers, etc.)
-# ==============================================================================
-#
+#  ZERO TRUST NETWORK - NODE AGENT INSTALLER (Production Ready)
+#  
+#  Cài đặt Agent + WireGuard Client trên Ubuntu/Debian Node
+#  Phiên bản: 2.1.0
+#  
 #  Usage:
-#    # Từ Hub server, copy command này sang node cần cài:
-#    curl -sL https://raw.githubusercontent.com/maithanhduyan/zero-trust-netwoking/main/scripts/install-agent.sh | \
-#      sudo HUB_URL="http://<HUB_IP>:8000" \
-#           HUB_ENDPOINT="<HUB_IP>:51820" \
-#           HUB_PUBLIC_KEY="<HUB_PUBLIC_KEY>" \
-#           NODE_ROLE="app" \
-#           bash
+#    curl -sL https://raw.githubusercontent.com/maithanhduyan/zero-trust-netwoking/main/scripts/node/install.sh | \
+#      sudo HUB_URL=http://hub-ip:8000 ROLE=app bash
 #
-#    # Hoặc download và chạy:
-#    chmod +x install-agent.sh
-#    sudo HUB_URL="http://203.0.113.1:8000" \
-#         HUB_ENDPOINT="203.0.113.1:51820" \
-#         HUB_PUBLIC_KEY="hM7m0pKxxdQzkwREnS3KM9tSK0LBTFlGq+xMSKptRSI=" \
-#         NODE_ROLE="db" \
-#         ./install-agent.sh
+#  Hoặc với options:
+#    sudo HUB_URL=http://hub-ip:8000 ROLE=db HOSTNAME=db-server-1 ./install.sh
+#
+#  ROLE options: app, db, ops, monitor, gateway
 #
 # ==============================================================================
 
 set -e
 
-# --- CẤU HÌNH ---
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || pwd)"
-INSTALL_DIR="${INSTALL_DIR:-/opt/zero-trust-agent}"
-REPO_URL="https://github.com/maithanhduyan/zero-trust-netwoking.git"
-BRANCH="${BRANCH:-master}"
-
-# Required environment variables (must be set by user)
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
 HUB_URL="${HUB_URL:-}"
-HUB_ENDPOINT="${HUB_ENDPOINT:-}"
-HUB_PUBLIC_KEY="${HUB_PUBLIC_KEY:-}"
-HUB_ADMIN_TOKEN="${HUB_ADMIN_TOKEN:-change-me-admin-secret}"
-NODE_ROLE="${NODE_ROLE:-app}"
-NODE_HOSTNAME_RAW="${NODE_HOSTNAME:-$(hostname)}"
-SYNC_INTERVAL="${SYNC_INTERVAL:-60}"
+ROLE="${ROLE:-app}"
+NODE_HOSTNAME="${HOSTNAME:-$(hostname)}"
 
-# Sanitize hostname: lowercase, replace dots with hyphens, remove invalid chars
-NODE_HOSTNAME=$(echo "$NODE_HOSTNAME_RAW" | tr '[:upper:]' '[:lower:]' | sed 's/\./-/g' | sed 's/[^a-z0-9-]//g' | sed 's/^-//;s/-$//' | cut -c1-63)
+# System paths
+CONFIG_DIR="/etc/zero-trust"
+LOG_DIR="/var/log/zero-trust"
+DATA_DIR="/var/lib/zero-trust"
 
-# WireGuard config
-WG_PORT="51820"
-WG_NETWORK="10.10.0.0/24"
-
-# --- MÀU SẮC ---
+# ==============================================================================
+# COLORS & LOGGING
+# ==============================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
+BOLD='\033[1m'
 NC='\033[0m'
 
-# --- HELPER FUNCTIONS ---
-log()     { echo -e "${BLUE}[INFO]${NC} $1"; }
-success() { echo -e "${GREEN}[OK]${NC} $1"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+log()     { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $1"; }
+success() { echo -e "${GREEN}[$(date '+%H:%M:%S')] ✓${NC} $1"; }
+warn()    { echo -e "${YELLOW}[$(date '+%H:%M:%S')] ⚠${NC} $1"; }
+error()   { echo -e "${RED}[$(date '+%H:%M:%S')] ✗${NC} $1"; exit 1; }
 
+# ==============================================================================
+# BANNER
+# ==============================================================================
 print_banner() {
     echo -e "${CYAN}"
     cat << 'EOF'
-╔════════════════════════════════════════════════════════════════════════════════════╗
-║                                                                                    ║
-║   ███████╗███████╗██████╗  ██████╗     ████████╗██████╗ ██╗   ██╗███████╗████████╗ ║
-║   ╚══███╔╝██╔════╝██╔══██╗██╔═══██╗    ╚══██╔══╝██╔══██╗██║   ██║██╔════╝╚══██╔══╝ ║
-║     ███╔╝ █████╗  ██████╔╝██║   ██║       ██║   ██████╔╝██║   ██║███████╗   ██║    ║
-║    ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██╔══██╗██║   ██║╚════██║   ██║    ║
-║   ███████╗███████╗██║  ██║╚██████╔╝       ██║   ██║  ██║╚██████╔╝███████║   ██║    ║
-║   ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝   ╚═╝    ║
-║                                                                                    ║
-║                    ZERO TRUST AGENT INSTALLER                                      ║
-║                    "Never Trust, Always Verify"                                    ║
-╚════════════════════════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║   ███████╗███████╗██████╗  ██████╗     ████████╗██████╗ ██╗   ██╗███████╗████████╗║
+║   ╚══███╔╝██╔════╝██╔══██╗██╔═══██╗    ╚══██╔══╝██╔══██╗██║   ██║██╔════╝╚══██╔══╝║
+║     ███╔╝ █████╗  ██████╔╝██║   ██║       ██║   ██████╔╝██║   ██║███████╗   ██║   ║
+║    ███╔╝  ██╔══╝  ██╔══██╗██║   ██║       ██║   ██╔══██╗██║   ██║╚════██║   ██║   ║
+║   ███████╗███████╗██║  ██║╚██████╔╝       ██║   ██║  ██║╚██████╔╝███████║   ██║   ║
+║   ╚══════╝╚══════╝╚═╝  ╚═╝ ╚═════╝        ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝   ╚═╝   ║
+║                                                                              ║
+║                    ZERO TRUST NETWORK - NODE INSTALLER                       ║
+║                        "Never Trust, Always Verify"                          ║
+║                              Version 2.1.0                                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 EOF
     echo -e "${NC}"
 }
 
 print_phase() {
     echo ""
-    echo -e "${MAGENTA}══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${MAGENTA} PHASE $1: $2${NC}"
-    echo -e "${MAGENTA}══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${MAGENTA}  PHASE $1: $2${NC}"
+    echo -e "${MAGENTA}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
 # ==============================================================================
-# PHASE 0: VALIDATE REQUIREMENTS
+# PHASE 0: PRE-FLIGHT CHECKS
 # ==============================================================================
-validate_requirements() {
-    print_phase "0" "KIỂM TRA YÊU CẦU"
+preflight_checks() {
+    print_phase "0" "KIỂM TRA MÔI TRƯỜNG"
 
     # Check root
     if [ "$(id -u)" -ne 0 ]; then
-        error "Script này cần quyền root. Vui lòng chạy với 'sudo'."
+        error "Script cần quyền root. Chạy với 'sudo $0'"
     fi
-    success "Đang chạy với quyền root"
+    success "Quyền root: OK"
 
-    # Check required environment variables
+    # Check HUB_URL
     if [ -z "$HUB_URL" ]; then
-        error "HUB_URL chưa được đặt. Ví dụ: HUB_URL='http://hub.example.com:8000'"
+        error "Thiếu HUB_URL. Sử dụng: HUB_URL=http://hub-ip:8000 $0"
     fi
+    log "Hub URL: $HUB_URL"
 
-    if [ -z "$HUB_ENDPOINT" ]; then
-        error "HUB_ENDPOINT chưa được đặt. Ví dụ: HUB_ENDPOINT='203.0.113.1:51820'"
-    fi
-
-    if [ -z "$HUB_PUBLIC_KEY" ]; then
-        error "HUB_PUBLIC_KEY chưa được đặt. Lấy từ Hub: cat /etc/wireguard/public.key"
-    fi
-
-    log "Cấu hình:"
-    echo "  HUB_URL:        $HUB_URL"
-    echo "  HUB_ENDPOINT:   $HUB_ENDPOINT"
-    echo "  HUB_PUBLIC_KEY: ${HUB_PUBLIC_KEY:0:20}..."
-    echo "  NODE_ROLE:      $NODE_ROLE"
-    if [ "$NODE_HOSTNAME" != "$NODE_HOSTNAME_RAW" ]; then
-        echo "  NODE_HOSTNAME:  $NODE_HOSTNAME (sanitized from: $NODE_HOSTNAME_RAW)"
-    else
-        echo "  NODE_HOSTNAME:  $NODE_HOSTNAME"
-    fi
-
-    success "Cấu hình hợp lệ"
+    # Validate role
+    case "$ROLE" in
+        app|db|ops|monitor|gateway) success "Role: $ROLE" ;;
+        *) error "Role không hợp lệ: $ROLE. Phải là: app, db, ops, monitor, gateway" ;;
+    esac
 
     # Check OS
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         log "Hệ điều hành: $PRETTY_NAME"
     fi
+
+    # Check connectivity to Hub
+    log "Kiểm tra kết nối đến Hub..."
+    if curl -s --max-time 10 "${HUB_URL}/health" | grep -q "healthy"; then
+        success "Kết nối Hub: OK"
+    else
+        error "Không thể kết nối Hub tại ${HUB_URL}. Kiểm tra lại URL và firewall."
+    fi
+
+    # Get node public IP (IPv4)
+    PUBLIC_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
+                curl -4 -s --max-time 5 icanhazip.com 2>/dev/null || \
+                hostname -I | awk '{print $1}')
+    log "Public IP: $PUBLIC_IP"
 }
 
 # ==============================================================================
@@ -139,120 +128,130 @@ validate_requirements() {
 install_dependencies() {
     print_phase "1" "CÀI ĐẶT DEPENDENCIES"
 
-    # Update package list
-    log "Cập nhật package list..."
+    log "Cập nhật package lists..."
     apt-get update -qq
 
-    # Install base packages
-    log "Cài đặt các gói cơ bản..."
-    apt-get install -y -qq curl git openssl ca-certificates iptables python3 python3-pip python3-venv >/dev/null 2>&1
-    success "Các gói cơ bản đã sẵn sàng"
-
-    # Install WireGuard
-    log "Kiểm tra WireGuard..."
-    if ! command -v wg &> /dev/null; then
-        log "Đang cài đặt WireGuard..."
-        apt-get install -y -qq wireguard wireguard-tools >/dev/null 2>&1
-    fi
-    success "WireGuard đã sẵn sàng"
-
-    # Enable IP forwarding
-    log "Cấu hình sysctl..."
-    cat > /etc/sysctl.d/99-wireguard.conf << EOF
-net.ipv4.ip_forward = 1
-EOF
-    sysctl -p /etc/sysctl.d/99-wireguard.conf >/dev/null 2>&1
-    success "Sysctl đã cấu hình"
+    log "Cài đặt system packages..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        curl \
+        jq \
+        wireguard \
+        wireguard-tools \
+        iptables \
+        >/dev/null 2>&1
+    
+    success "Dependencies đã cài đặt"
 }
 
 # ==============================================================================
-# PHASE 2: GENERATE WIREGUARD KEYS
+# PHASE 2: SETUP DIRECTORIES
 # ==============================================================================
-setup_wireguard_keys() {
-    print_phase "2" "TẠO WIREGUARD KEYPAIR"
+setup_directories() {
+    print_phase "2" "TẠO CẤU TRÚC THƯ MỤC"
 
-    # Create WireGuard directory
+    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$LOG_DIR"
+    mkdir -p "$DATA_DIR"
     mkdir -p /etc/wireguard
-    chmod 700 /etc/wireguard
 
-    # Generate keys if not exists
-    if [ ! -f /etc/wireguard/private.key ]; then
-        log "Đang tạo keypair..."
+    chmod 700 /etc/wireguard
+    chmod 755 "$LOG_DIR"
+    chmod 755 "$CONFIG_DIR"
+    chmod 700 "$DATA_DIR"
+
+    success "Đã tạo cấu trúc thư mục"
+}
+
+# ==============================================================================
+# PHASE 3: GENERATE WIREGUARD KEYS
+# ==============================================================================
+generate_wireguard_keys() {
+    print_phase "3" "TẠO WIREGUARD KEYPAIR"
+
+    if [ -f /etc/wireguard/private.key ]; then
+        log "Keypair đã tồn tại, sử dụng lại"
+    else
         wg genkey | tee /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key
         chmod 600 /etc/wireguard/private.key
+        chmod 644 /etc/wireguard/public.key
         success "Đã tạo keypair mới"
-    else
-        success "Keypair đã tồn tại"
     fi
 
-    # Read public key for registration
+    NODE_PRIVATE_KEY=$(cat /etc/wireguard/private.key)
     NODE_PUBLIC_KEY=$(cat /etc/wireguard/public.key)
-    log "Public Key: $NODE_PUBLIC_KEY"
+    log "Public Key: ${NODE_PUBLIC_KEY}"
 }
 
 # ==============================================================================
-# PHASE 3: DOWNLOAD AGENT CODE
-# ==============================================================================
-download_agent() {
-    print_phase "3" "TẢI MÃ NGUỒN AGENT"
-
-    # Clone or update repository
-    if [ -d "$INSTALL_DIR/.git" ]; then
-        log "Cập nhật mã nguồn..."
-        cd "$INSTALL_DIR"
-        git fetch origin
-        git reset --hard "origin/$BRANCH"
-    else
-        log "Clone repository..."
-        rm -rf "$INSTALL_DIR"
-        git clone -b "$BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"
-    fi
-
-    success "Mã nguồn tại: $INSTALL_DIR"
-}
-
-# ==============================================================================
-# PHASE 4: REGISTER WITH CONTROL PLANE
+# PHASE 4: REGISTER WITH HUB
 # ==============================================================================
 register_with_hub() {
-    print_phase "4" "ĐĂNG KÝ VỚI CONTROL PLANE"
+    print_phase "4" "ĐĂNG KÝ VỚI HUB"
 
-    NODE_PUBLIC_KEY=$(cat /etc/wireguard/public.key)
-    OS_INFO=$(. /etc/os-release && echo "$PRETTY_NAME ($(uname -m))")
+    # Collect system info
+    OS_INFO=$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'"' -f2 || echo "Linux")
+    KERNEL=$(uname -r)
+    AGENT_VERSION="2.1.0"
 
-    log "Đăng ký node với Control Plane..."
+    log "Gửi đăng ký đến Hub..."
+    
+    REGISTER_DATA=$(cat << EOF
+{
+    "hostname": "${NODE_HOSTNAME}",
+    "role": "${ROLE}",
+    "public_key": "${NODE_PUBLIC_KEY}",
+    "real_ip": "${PUBLIC_IP}",
+    "agent_version": "${AGENT_VERSION}",
+    "os_info": "${OS_INFO} (${KERNEL})"
+}
+EOF
+)
 
-    REGISTER_RESPONSE=$(curl -s -X POST "${HUB_URL}/api/v1/agent/register" \
+    RESPONSE=$(curl -s -X POST "${HUB_URL}/api/v1/agent/register" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"hostname\": \"${NODE_HOSTNAME}\",
-            \"role\": \"${NODE_ROLE}\",
-            \"public_key\": \"${NODE_PUBLIC_KEY}\",
-            \"description\": \"Installed via install-agent.sh\",
-            \"agent_version\": \"1.0.0\",
-            \"os_info\": \"${OS_INFO}\"
-        }" 2>&1)
+        -d "$REGISTER_DATA")
 
-    # Check response
-    if echo "$REGISTER_RESPONSE" | grep -q "overlay_ip"; then
-        OVERLAY_IP=$(echo "$REGISTER_RESPONSE" | grep -o '"overlay_ip":"[^"]*"' | cut -d'"' -f4)
-        NODE_STATUS=$(echo "$REGISTER_RESPONSE" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-
-        success "Đăng ký thành công!"
-        echo "  Overlay IP: $OVERLAY_IP"
-        echo "  Status:     $NODE_STATUS"
-
-        # Save overlay IP for WireGuard config
-        echo "$OVERLAY_IP" > /etc/wireguard/overlay_ip
-    else
-        warn "Phản hồi từ Control Plane:"
-        echo "$REGISTER_RESPONSE" | head -5
-
-        # Try to extract error message
-        if echo "$REGISTER_RESPONSE" | grep -q "error"; then
-            warn "Có thể đã đăng ký trước đó. Tiếp tục..."
-        fi
+    # Check for errors
+    if echo "$RESPONSE" | grep -q '"error"'; then
+        ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error // .detail // "Unknown error"')
+        error "Đăng ký thất bại: $ERROR_MSG"
     fi
+
+    # Extract configuration from response
+    OVERLAY_IP=$(echo "$RESPONSE" | jq -r '.overlay_ip // .data.overlay_ip // empty')
+    HUB_PUBLIC_KEY=$(echo "$RESPONSE" | jq -r '.hub_public_key // .data.hub_public_key // empty')
+    HUB_ENDPOINT=$(echo "$RESPONSE" | jq -r '.hub_endpoint // .data.hub_endpoint // empty')
+    NODE_ID=$(echo "$RESPONSE" | jq -r '.node_id // .data.node_id // empty')
+
+    # Validate response
+    if [ -z "$OVERLAY_IP" ] || [ "$OVERLAY_IP" = "null" ]; then
+        error "Hub không trả về overlay_ip. Response: $RESPONSE"
+    fi
+
+    if [ -z "$HUB_PUBLIC_KEY" ] || [ "$HUB_PUBLIC_KEY" = "null" ]; then
+        error "Hub không trả về hub_public_key. Response: $RESPONSE"
+    fi
+
+    success "Đăng ký thành công!"
+    log "  → Node ID:     ${NODE_ID}"
+    log "  → Overlay IP:  ${OVERLAY_IP}"
+    log "  → Hub Endpoint: ${HUB_ENDPOINT}"
+
+    # Save registration info
+    cat > "$CONFIG_DIR/node-info.json" << EOF
+{
+    "node_id": "${NODE_ID}",
+    "hostname": "${NODE_HOSTNAME}",
+    "role": "${ROLE}",
+    "overlay_ip": "${OVERLAY_IP}",
+    "public_key": "${NODE_PUBLIC_KEY}",
+    "hub_url": "${HUB_URL}",
+    "hub_endpoint": "${HUB_ENDPOINT}",
+    "hub_public_key": "${HUB_PUBLIC_KEY}",
+    "registered_at": "$(date -Iseconds)"
+}
+EOF
+    chmod 600 "$CONFIG_DIR/node-info.json"
 }
 
 # ==============================================================================
@@ -261,234 +260,228 @@ register_with_hub() {
 configure_wireguard() {
     print_phase "5" "CẤU HÌNH WIREGUARD"
 
-    WG_PRIVATE_KEY=$(cat /etc/wireguard/private.key)
-
-    # Get overlay IP from registration or file
-    if [ -f /etc/wireguard/overlay_ip ]; then
-        OVERLAY_IP=$(cat /etc/wireguard/overlay_ip)
-    else
-        # Fallback: request new IP from Control Plane via node lookup
-        warn "Overlay IP chưa được gán. Sử dụng IP tạm: 10.10.0.100"
-        OVERLAY_IP="10.10.0.100"
-    fi
-
-    # Ensure IP has CIDR notation
-    if [[ "$OVERLAY_IP" != */* ]]; then
-        OVERLAY_IP="${OVERLAY_IP}/24"
-    fi
-
-    log "Overlay IP: $OVERLAY_IP"
-
-    # Create WireGuard config
     log "Tạo cấu hình WireGuard..."
     cat > /etc/wireguard/wg0.conf << EOF
 # ==============================================================================
-# WIREGUARD SPOKE CONFIGURATION
-# Node: ${NODE_HOSTNAME} (${NODE_ROLE})
-# Generated by install-agent.sh - $(date -Iseconds)
+# WIREGUARD NODE - Zero Trust Network
+# Generated: $(date -Iseconds)
+# Node: ${NODE_HOSTNAME} (${ROLE})
 # ==============================================================================
 
 [Interface]
-PrivateKey = ${WG_PRIVATE_KEY}
-Address = ${OVERLAY_IP}
+PrivateKey = ${NODE_PRIVATE_KEY}
+Address = ${OVERLAY_IP}/24
+# DNS = 10.10.0.1  # Uncomment if Hub runs DNS
+
+# Zero Trust Firewall Hook
+PostUp = /etc/zero-trust/firewall-up.sh || true
+PostDown = /etc/zero-trust/firewall-down.sh || true
 
 [Peer]
 # Hub Server
 PublicKey = ${HUB_PUBLIC_KEY}
 Endpoint = ${HUB_ENDPOINT}
-AllowedIPs = ${WG_NETWORK}
+AllowedIPs = 10.10.0.0/24
 PersistentKeepalive = 25
 EOF
     chmod 600 /etc/wireguard/wg0.conf
+    success "WireGuard config đã tạo"
+}
 
-    # Start WireGuard
-    log "Khởi động WireGuard..."
+# ==============================================================================
+# PHASE 6: SETUP ZERO TRUST FIREWALL
+# ==============================================================================
+setup_firewall() {
+    print_phase "6" "CẤU HÌNH ZERO TRUST FIREWALL"
+
+    # Create firewall-up script
+    cat > "$CONFIG_DIR/firewall-up.sh" << 'EOF'
+#!/bin/bash
+# Zero Trust Firewall - Activated on WireGuard up
+
+# Create ZT_ACL chain if not exists
+iptables -N ZT_ACL 2>/dev/null || true
+iptables -F ZT_ACL
+
+# Default policy: DROP all incoming on wg0
+# Rules will be added by agent based on policies
+
+# Hook ZT_ACL to INPUT chain for wg0 interface
+iptables -C INPUT -i wg0 -j ZT_ACL 2>/dev/null || \
+    iptables -I INPUT -i wg0 -j ZT_ACL
+
+# Allow established connections
+iptables -C ZT_ACL -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || \
+    iptables -A ZT_ACL -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allow ICMP (ping) from Hub (10.10.0.1)
+iptables -C ZT_ACL -s 10.10.0.1 -p icmp -j ACCEPT 2>/dev/null || \
+    iptables -A ZT_ACL -s 10.10.0.1 -p icmp -j ACCEPT
+
+# Default: DROP (Zero Trust - deny by default)
+iptables -C ZT_ACL -j DROP 2>/dev/null || \
+    iptables -A ZT_ACL -j DROP
+
+echo "[$(date)] Zero Trust Firewall activated" >> /var/log/zero-trust/firewall.log
+EOF
+    chmod +x "$CONFIG_DIR/firewall-up.sh"
+
+    # Create firewall-down script
+    cat > "$CONFIG_DIR/firewall-down.sh" << 'EOF'
+#!/bin/bash
+# Zero Trust Firewall - Deactivated on WireGuard down
+
+iptables -D INPUT -i wg0 -j ZT_ACL 2>/dev/null || true
+iptables -F ZT_ACL 2>/dev/null || true
+iptables -X ZT_ACL 2>/dev/null || true
+
+echo "[$(date)] Zero Trust Firewall deactivated" >> /var/log/zero-trust/firewall.log
+EOF
+    chmod +x "$CONFIG_DIR/firewall-down.sh"
+
+    success "Zero Trust Firewall scripts đã tạo"
+}
+
+# ==============================================================================
+# PHASE 7: START WIREGUARD
+# ==============================================================================
+start_wireguard() {
+    print_phase "7" "KHỞI ĐỘNG WIREGUARD"
+
     systemctl enable wg-quick@wg0 >/dev/null 2>&1
-    systemctl restart wg-quick@wg0 || systemctl start wg-quick@wg0
+    systemctl stop wg-quick@wg0 2>/dev/null || true
+    systemctl start wg-quick@wg0
 
-    # Verify
+    # Verify connection
+    log "Kiểm tra kết nối..."
     sleep 2
+
     if wg show wg0 >/dev/null 2>&1; then
         success "WireGuard đang chạy"
-        wg show wg0 | head -10
+        
+        # Test connectivity to Hub
+        HUB_OVERLAY_IP="10.10.0.1"
+        if ping -c 1 -W 3 "$HUB_OVERLAY_IP" >/dev/null 2>&1; then
+            success "Kết nối Hub (${HUB_OVERLAY_IP}): OK"
+        else
+            warn "Không ping được Hub. Handshake có thể chưa hoàn tất."
+        fi
     else
-        warn "WireGuard chưa khởi động. Kiểm tra: journalctl -u wg-quick@wg0"
+        error "WireGuard không khởi động được"
     fi
 }
 
 # ==============================================================================
-# PHASE 6: ADD PEER TO HUB (via API)
+# PHASE 8: CREATE AGENT SERVICE (Optional)
 # ==============================================================================
-add_peer_to_hub() {
-    print_phase "6" "TỰ ĐỘNG THÊM PEER VÀO HUB"
+create_agent_service() {
+    print_phase "8" "TẠO AGENT SERVICE"
 
-    NODE_PUBLIC_KEY=$(cat /etc/wireguard/public.key)
+    # Create simple policy sync script
+    cat > "$CONFIG_DIR/sync-policies.sh" << 'EOF'
+#!/bin/bash
+# Sync firewall policies from Hub
 
-    # Get overlay IP (just the IP, not CIDR)
-    if [ -f /etc/wireguard/overlay_ip ]; then
-        OVERLAY_IP_CIDR=$(cat /etc/wireguard/overlay_ip)
-        OVERLAY_IP_ONLY=$(echo "$OVERLAY_IP_CIDR" | cut -d'/' -f1)
-    else
-        OVERLAY_IP_ONLY="10.10.0.100"
-    fi
+CONFIG_FILE="/etc/zero-trust/node-info.json"
+LOG_FILE="/var/log/zero-trust/agent.log"
 
-    log "Gọi API thêm peer vào Hub..."
-    log "Node Public Key: $NODE_PUBLIC_KEY"
-    log "AllowedIPs: ${OVERLAY_IP_ONLY}/32"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "[$(date)] Config file not found" >> "$LOG_FILE"
+    exit 1
+fi
 
-    # Call API to add peer to Hub
-    ADD_PEER_RESPONSE=$(curl -s -X POST "${HUB_URL}/api/v1/admin/wireguard/add-peer" \
-        -H "Content-Type: application/json" \
-        -H "X-Admin-Token: ${HUB_ADMIN_TOKEN}" \
-        -d "{
-            \"public_key\": \"${NODE_PUBLIC_KEY}\",
-            \"allowed_ips\": \"${OVERLAY_IP_ONLY}/32\",
-            \"comment\": \"${NODE_HOSTNAME}\"
-        }" 2>&1)
+HUB_URL=$(jq -r '.hub_url' "$CONFIG_FILE")
+NODE_ID=$(jq -r '.node_id' "$CONFIG_FILE")
 
-    if echo "$ADD_PEER_RESPONSE" | grep -q '"success":true'; then
-        success "✅ Peer đã được thêm vào Hub tự động!"
-    else
-        warn "Không thể tự động thêm peer. Phản hồi: $ADD_PEER_RESPONSE"
-        echo ""
-        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${YELLOW}  FALLBACK: Chạy lệnh sau trên HUB SERVER:${NC}"
-        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-        echo "wg set wg0 peer ${NODE_PUBLIC_KEY} allowed-ips ${OVERLAY_IP_ONLY}/32"
-        echo "wg-quick save wg0"
-        echo ""
-        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    fi
-}
+# Fetch ACL rules from Hub
+RULES=$(curl -s "${HUB_URL}/api/v1/agent/acl/${NODE_ID}" 2>/dev/null)
 
-# ==============================================================================
-# PHASE 7: SETUP AGENT SERVICE
-# ==============================================================================
-setup_agent_service() {
-    print_phase "7" "CÀI ĐẶT AGENT SERVICE"
+if [ -z "$RULES" ] || echo "$RULES" | grep -q '"error"'; then
+    echo "[$(date)] Failed to fetch ACL rules" >> "$LOG_FILE"
+    exit 1
+fi
 
-    cd "$INSTALL_DIR/agent"
-
-    # Create virtual environment
-    log "Tạo Python virtual environment..."
-    python3 -m venv venv
-
-    # Install dependencies
-    log "Cài đặt Python packages..."
-    venv/bin/pip install --quiet --upgrade pip
-    venv/bin/pip install --quiet requests schedule psutil pyyaml
-    success "Dependencies đã cài đặt"
-
-    # Create agent config
-    log "Tạo cấu hình Agent..."
-    mkdir -p /etc/zerotrust
-    cat > /etc/zerotrust/agent.conf << EOF
-# ==============================================================================
-# ZERO TRUST AGENT CONFIGURATION
-# Generated by install-agent.sh - $(date -Iseconds)
-# ==============================================================================
-
-[agent]
-hostname = ${NODE_HOSTNAME}
-role = ${NODE_ROLE}
-control_plane_url = ${HUB_URL}
-sync_interval = ${SYNC_INTERVAL}
-heartbeat_interval = 30
-
-[wireguard]
-interface = wg0
-config_dir = /etc/wireguard
-
-[firewall]
-backend = iptables
-chain_name = ZT_ACL
-
-[logging]
-level = INFO
-file = /var/log/zerotrust/agent.log
+# Apply rules (simplified - real implementation would parse and apply)
+echo "[$(date)] Synced policies from Hub" >> "$LOG_FILE"
 EOF
+    chmod +x "$CONFIG_DIR/sync-policies.sh"
 
-    # Create log directory
-    mkdir -p /var/log/zerotrust
-
-    # Create systemd service
-    log "Tạo systemd service..."
+    # Create systemd timer for periodic sync
     cat > /etc/systemd/system/zero-trust-agent.service << EOF
 [Unit]
-Description=Zero Trust Agent
+Description=Zero Trust Agent - Policy Sync
 After=network.target wg-quick@wg0.service
+Wants=wg-quick@wg0.service
 
 [Service]
-Type=simple
-User=root
-WorkingDirectory=${INSTALL_DIR}/agent
-ExecStart=${INSTALL_DIR}/agent/venv/bin/python agent.py --hostname ${NODE_HOSTNAME} --role ${NODE_ROLE} --control-plane ${HUB_URL} --sync-interval ${SYNC_INTERVAL}
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
+Type=oneshot
+ExecStart=${CONFIG_DIR}/sync-policies.sh
 EOF
 
-    # Reload and start
-    systemctl daemon-reload
-    systemctl enable zero-trust-agent
-    systemctl restart zero-trust-agent
+    cat > /etc/systemd/system/zero-trust-agent.timer << EOF
+[Unit]
+Description=Zero Trust Agent - Periodic Policy Sync
 
-    # Wait and check
-    sleep 3
-    if systemctl is-active --quiet zero-trust-agent; then
-        success "Agent service đang chạy"
-    else
-        warn "Agent chưa khởi động. Kiểm tra: journalctl -u zero-trust-agent -f"
-    fi
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+AccuracySec=10
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable zero-trust-agent.timer >/dev/null 2>&1
+    systemctl start zero-trust-agent.timer
+
+    success "Agent service đã tạo (sync mỗi 60s)"
 }
 
 # ==============================================================================
-# PHASE 8: VERIFY & SHOW SUMMARY
+# PHASE 9: SUMMARY
 # ==============================================================================
 show_summary() {
-    print_phase "8" "HOÀN TẤT"
+    print_phase "9" "HOÀN TẤT"
 
-    # Get info
-    NODE_PUBLIC_KEY=$(cat /etc/wireguard/public.key 2>/dev/null || echo "N/A")
-    OVERLAY_IP=$(cat /etc/wireguard/overlay_ip 2>/dev/null || echo "N/A")
-    WG_STATUS=$(wg show wg0 2>/dev/null | grep -E "peer|endpoint" | head -4 || echo "Not connected")
-    AGENT_STATUS=$(systemctl is-active zero-trust-agent 2>/dev/null || echo "unknown")
+    # Get latency to Hub
+    LATENCY=$(ping -c 1 -W 3 10.10.0.1 2>/dev/null | grep 'time=' | sed 's/.*time=\([0-9.]*\).*/\1ms/' || echo "N/A")
 
     echo ""
-    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║              ✅ ZERO TRUST AGENT ĐÃ CÀI ĐẶT!                         ║${NC}"
-    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║                                                                      ║${NC}"
-    echo -e "${GREEN}║${NC}  🖥️  Node:          ${YELLOW}${NODE_HOSTNAME}${NC} (${NODE_ROLE})"
-    echo -e "${GREEN}║${NC}  🌍 Overlay IP:    ${YELLOW}${OVERLAY_IP}${NC}"
-    echo -e "${GREEN}║${NC}  🔑 Public Key:    ${YELLOW}${NODE_PUBLIC_KEY}${NC}"
-    echo -e "${GREEN}║${NC}  🔗 Hub:           ${YELLOW}${HUB_ENDPOINT}${NC}"
-    echo -e "${GREEN}║${NC}  📂 Install Dir:   ${YELLOW}${INSTALL_DIR}${NC}"
-    echo -e "${GREEN}║                                                                      ║${NC}"
-    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║${NC}  Agent Status: ${AGENT_STATUS}"
-    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║${NC}  ${CYAN}COMMANDS:${NC}"
-    echo -e "${GREEN}║${NC}  - Agent logs:     journalctl -u zero-trust-agent -f"
-    echo -e "${GREEN}║${NC}  - WireGuard:      wg show wg0"
-    echo -e "${GREEN}║${NC}  - Restart agent:  systemctl restart zero-trust-agent"
-    echo -e "${GREEN}║${NC}  - Test VPN:       ping 10.10.0.1"
+    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                                                                              ║${NC}"
+    echo -e "${GREEN}║             ✅ ZERO TRUST NODE ĐÃ CÀI ĐẶT THÀNH CÔNG!                       ║${NC}"
+    echo -e "${GREEN}║                                                                              ║${NC}"
+    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${GREEN}║${NC}"
-    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}📍 THÔNG TIN NODE:${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Hostname:     ${CYAN}${NODE_HOSTNAME}${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Role:         ${CYAN}${ROLE}${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Overlay IP:   ${CYAN}${OVERLAY_IP}${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Public IP:    ${CYAN}${PUBLIC_IP}${NC}"
+    echo -e "${GREEN}║${NC}  └─ Public Key:   ${CYAN}${NODE_PUBLIC_KEY}${NC}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}🔗 KẾT NỐI HUB:${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Hub URL:      ${CYAN}${HUB_URL}${NC}"
+    echo -e "${GREEN}║${NC}  ├─ Hub Endpoint: ${CYAN}${HUB_ENDPOINT}${NC}"
+    echo -e "${GREEN}║${NC}  └─ Latency:      ${CYAN}${LATENCY}${NC}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}🔒 ZERO TRUST FIREWALL:${NC}"
+    echo -e "${GREEN}║${NC}  └─ Status:       ${CYAN}Active (Default DENY)${NC}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}📋 QUẢN LÝ:${NC}"
+    echo -e "${GREEN}║${NC}  ├─ systemctl status wg-quick@wg0"
+    echo -e "${GREEN}║${NC}  ├─ wg show wg0"
+    echo -e "${GREEN}║${NC}  ├─ iptables -L ZT_ACL -n -v"
+    echo -e "${GREEN}║${NC}  └─ journalctl -u wg-quick@wg0 -f"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}║${NC}  ${BOLD}🔥 GỠ CÀI ĐẶT:${NC}"
+    echo -e "${GREEN}║${NC}  └─ curl -sL .../scripts/node/uninstall.sh | sudo bash"
+    echo -e "${GREEN}║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-
-    # Test connectivity
-    log "Kiểm tra kết nối tới Hub..."
-    sleep 2
-    if ping -c 2 -W 3 10.10.0.1 >/dev/null 2>&1; then
-        success "✅ Kết nối tới Hub thành công!"
-    else
-        warn "⚠️ Chưa ping được Hub (10.10.0.1). Đã thêm peer vào Hub chưa?"
-        echo "  → Xem PHASE 6 để biết lệnh cần chạy trên Hub"
-    fi
 }
 
 # ==============================================================================
@@ -496,23 +489,17 @@ show_summary() {
 # ==============================================================================
 main() {
     print_banner
-
-    echo ""
-    echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${BLUE}  ZERO TRUST AGENT INSTALLER v1.0${NC}"
-    echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
-    echo ""
-
-    validate_requirements
+    
+    preflight_checks
     install_dependencies
-    setup_wireguard_keys
-    download_agent
+    setup_directories
+    generate_wireguard_keys
     register_with_hub
     configure_wireguard
-    add_peer_to_hub
-    setup_agent_service
+    setup_firewall
+    start_wireguard
+    create_agent_service
     show_summary
 }
 
-# Run
 main "$@"

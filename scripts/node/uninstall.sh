@@ -1,67 +1,71 @@
 #!/bin/bash
 # ==============================================================================
 # ZERO TRUST NETWORK - NODE UNINSTALLER
-# Removes Agent and WireGuard configuration from spoke node
+# Removes Agent and WireGuard from node
 # ==============================================================================
 #
 # Usage:
-#   sudo ./uninstall.sh              # Interactive mode
+#   sudo ./uninstall.sh              # Interactive
 #   sudo ./uninstall.sh --force      # Skip confirmations
 #   sudo ./uninstall.sh --dry-run    # Preview only
-#   sudo ./uninstall.sh --keep-keys  # Keep WireGuard keys for re-registration
 #
 # ==============================================================================
 
 set -e
 
-# Load common library
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../lib/common.sh" 2>/dev/null || {
-    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-    log() { echo -e "${BLUE}[INFO]${NC} $1"; }
-    success() { echo -e "${GREEN}[OK]${NC} $1"; }
-    warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-    error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
-}
+# Configuration
+CONFIG_DIR="/etc/zero-trust"
+LOG_DIR="/var/log/zero-trust"
+DATA_DIR="/var/lib/zero-trust"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log()     { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $1"; }
+success() { echo -e "${GREEN}[$(date '+%H:%M:%S')] ✓${NC} $1"; }
 
 # Parse arguments
 FORCE=false
 DRY_RUN=false
-KEEP_KEYS=false
 for arg in "$@"; do
     case $arg in
-        --force) FORCE=true ;;
-        --dry-run) DRY_RUN=true ;;
-        --keep-keys) KEEP_KEYS=true ;;
+        --force|-f) FORCE=true ;;
+        --dry-run|-n) DRY_RUN=true ;;
     esac
 done
+
+run_cmd() {
+    local desc="$1"
+    local cmd="$2"
+    if [ "$DRY_RUN" = "true" ]; then
+        echo -e "${YELLOW}[DRY-RUN]${NC} Would: $desc"
+    else
+        log "$desc"
+        eval "$cmd" 2>/dev/null || true
+    fi
+}
 
 # Banner
 echo ""
 echo -e "${RED}╔══════════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${RED}║              ⚠️  ZERO TRUST NODE UNINSTALLER                         ║${NC}"
 echo -e "${RED}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${RED}║  This will remove:                                                   ║${NC}"
-echo -e "${RED}║  - Zero Trust Agent service                                          ║${NC}"
-echo -e "${RED}║  - WireGuard configuration                                           ║${NC}"
-echo -e "${RED}║  - Firewall rules (ZT_ACL chain)                                     ║${NC}"
+echo -e "${RED}║  Sẽ xóa:                                                             ║${NC}"
+echo -e "${RED}║  • WireGuard interface (wg0) và config                               ║${NC}"
+echo -e "${RED}║  • Zero Trust Agent service                                          ║${NC}"
+echo -e "${RED}║  • ZT_ACL firewall chain                                             ║${NC}"
+echo -e "${RED}║  • Config và log files                                               ║${NC}"
 echo -e "${RED}╚══════════════════════════════════════════════════════════════════════╝${NC}"
-echo ""
-
-# Show current info
-if [ -f /etc/zerotrust/agent.conf ]; then
-    HOSTNAME=$(grep "^hostname" /etc/zerotrust/agent.conf | cut -d'=' -f2 | tr -d ' ')
-    ROLE=$(grep "^role" /etc/zerotrust/agent.conf | cut -d'=' -f2 | tr -d ' ')
-    echo -e "  Node: ${YELLOW}${HOSTNAME}${NC} (${ROLE})"
-fi
-if [ -f /etc/wireguard/overlay_ip ]; then
-    OVERLAY_IP=$(cat /etc/wireguard/overlay_ip)
-    echo -e "  Overlay IP: ${YELLOW}${OVERLAY_IP}${NC}"
-fi
 echo ""
 
 # Confirmation
 if [ "$FORCE" != "true" ] && [ "$DRY_RUN" != "true" ]; then
+    echo -e "${YELLOW}⚠️  CẢNH BÁO: Node sẽ mất kết nối với Zero Trust Network!${NC}"
+    echo ""
     read -p "Nhập 'UNINSTALL' để xác nhận: " confirm
     if [ "$confirm" != "UNINSTALL" ]; then
         echo "Hủy bỏ."
@@ -69,132 +73,97 @@ if [ "$FORCE" != "true" ] && [ "$DRY_RUN" != "true" ]; then
     fi
 fi
 
-run_cmd() {
-    if [ "$DRY_RUN" = "true" ]; then
-        echo -e "${YELLOW}[DRY-RUN]${NC} $1"
-    else
-        eval "$1"
-    fi
-}
-
 # ==============================================================================
 # PHASE 1: STOP SERVICES
 # ==============================================================================
 echo ""
-log "Phase 1: Dừng services..."
+log "━━━ PHASE 1: DỪNG SERVICES ━━━"
 
-# Stop Agent
-if systemctl is-active --quiet zero-trust-agent 2>/dev/null; then
-    run_cmd "systemctl stop zero-trust-agent"
-    run_cmd "systemctl disable zero-trust-agent 2>/dev/null || true"
-    success "Đã dừng Agent"
-else
-    log "Agent không chạy"
+# Stop agent timer
+if systemctl is-active --quiet zero-trust-agent.timer 2>/dev/null; then
+    run_cmd "Dừng agent timer" "systemctl stop zero-trust-agent.timer"
 fi
+run_cmd "Disable agent timer" "systemctl disable zero-trust-agent.timer"
 
 # Stop WireGuard
 if systemctl is-active --quiet wg-quick@wg0 2>/dev/null; then
-    run_cmd "systemctl stop wg-quick@wg0"
-    run_cmd "systemctl disable wg-quick@wg0 2>/dev/null || true"
+    run_cmd "Dừng WireGuard" "systemctl stop wg-quick@wg0"
     success "Đã dừng WireGuard"
-else
-    log "WireGuard không chạy"
 fi
+run_cmd "Disable WireGuard" "systemctl disable wg-quick@wg0"
 
 # ==============================================================================
-# PHASE 2: REMOVE FIREWALL RULES
+# PHASE 2: REMOVE ZERO TRUST FIREWALL
 # ==============================================================================
 echo ""
-log "Phase 2: Xóa firewall rules..."
+log "━━━ PHASE 2: XÓA FIREWALL RULES ━━━"
 
-# Remove ZT_ACL chain references from INPUT
-run_cmd "iptables -D INPUT -i wg0 -j ZT_ACL 2>/dev/null || true"
-run_cmd "iptables -D FORWARD -i wg0 -j ZT_ACL 2>/dev/null || true"
-
-# Flush and delete ZT_ACL chain
-run_cmd "iptables -F ZT_ACL 2>/dev/null || true"
-run_cmd "iptables -X ZT_ACL 2>/dev/null || true"
-
-success "Đã xóa ZT_ACL chain"
+# Remove ZT_ACL chain
+run_cmd "Xóa ZT_ACL từ INPUT" "iptables -D INPUT -i wg0 -j ZT_ACL"
+run_cmd "Flush ZT_ACL" "iptables -F ZT_ACL"
+run_cmd "Xóa ZT_ACL chain" "iptables -X ZT_ACL"
+success "Đã xóa ZT_ACL firewall"
 
 # ==============================================================================
-# PHASE 3: REMOVE CONFIGURATION
+# PHASE 3: REMOVE SYSTEMD FILES
 # ==============================================================================
 echo ""
-log "Phase 3: Xóa cấu hình..."
+log "━━━ PHASE 3: XÓA SYSTEMD FILES ━━━"
 
-# Remove systemd service
-if [ -f /etc/systemd/system/zero-trust-agent.service ]; then
-    run_cmd "rm -f /etc/systemd/system/zero-trust-agent.service"
-    run_cmd "systemctl daemon-reload"
-    success "Đã xóa systemd service"
-fi
+run_cmd "Xóa agent service" "rm -f /etc/systemd/system/zero-trust-agent.service"
+run_cmd "Xóa agent timer" "rm -f /etc/systemd/system/zero-trust-agent.timer"
+run_cmd "Reload systemd" "systemctl daemon-reload"
+success "Đã xóa systemd files"
 
-# Remove agent config
-if [ -d /etc/zerotrust ]; then
-    run_cmd "rm -rf /etc/zerotrust"
-    success "Đã xóa agent config"
-fi
+# ==============================================================================
+# PHASE 4: REMOVE WIREGUARD
+# ==============================================================================
+echo ""
+log "━━━ PHASE 4: XÓA WIREGUARD ━━━"
 
-# Remove WireGuard config
 if [ -d /etc/wireguard ]; then
-    if [ "$KEEP_KEYS" = "true" ]; then
-        # Keep keys, only remove config
-        run_cmd "rm -f /etc/wireguard/wg0.conf"
-        run_cmd "rm -f /etc/wireguard/overlay_ip"
-        success "Đã xóa WireGuard config (giữ lại keys)"
-    else
-        # Backup first
-        if [ "$DRY_RUN" != "true" ]; then
-            BACKUP_DIR="/root/wireguard-backup-$(date +%Y%m%d_%H%M%S)"
-            mkdir -p "$BACKUP_DIR"
-            cp -r /etc/wireguard/* "$BACKUP_DIR/" 2>/dev/null || true
-            log "Backup WireGuard tại: $BACKUP_DIR"
-        fi
-        run_cmd "rm -rf /etc/wireguard/*"
-        success "Đã xóa WireGuard config và keys"
+    if [ "$DRY_RUN" != "true" ]; then
+        BACKUP_DIR="/root/wireguard-backup-$(date +%Y%m%d_%H%M%S)"
+        mkdir -p "$BACKUP_DIR"
+        cp -r /etc/wireguard/* "$BACKUP_DIR/" 2>/dev/null || true
+        log "Đã backup WireGuard tại: $BACKUP_DIR"
     fi
+    run_cmd "Xóa WireGuard config" "rm -rf /etc/wireguard/*"
+    success "Đã xóa WireGuard config"
 fi
 
 # ==============================================================================
-# PHASE 4: REMOVE APPLICATION
+# PHASE 5: REMOVE CONFIG & DATA
 # ==============================================================================
 echo ""
-log "Phase 4: Xóa ứng dụng..."
+log "━━━ PHASE 5: XÓA CONFIG & DATA ━━━"
 
-# Remove agent directory
-if [ -d /opt/zero-trust-agent ]; then
-    run_cmd "rm -rf /opt/zero-trust-agent"
-    success "Đã xóa /opt/zero-trust-agent"
-fi
-
-# Remove logs
-if [ -d /var/log/zerotrust ]; then
-    run_cmd "rm -rf /var/log/zerotrust"
-    success "Đã xóa logs"
-fi
+run_cmd "Xóa config $CONFIG_DIR" "rm -rf $CONFIG_DIR"
+run_cmd "Xóa data $DATA_DIR" "rm -rf $DATA_DIR"
+run_cmd "Xóa logs $LOG_DIR" "rm -rf $LOG_DIR"
+success "Đã xóa config và data"
 
 # ==============================================================================
-# PHASE 5: SUMMARY
+# SUMMARY
 # ==============================================================================
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
 if [ "$DRY_RUN" = "true" ]; then
     echo -e "${GREEN}║              DRY-RUN HOÀN TẤT - Không có gì bị xóa                  ║${NC}"
 else
-    echo -e "${GREEN}║              ✅ NODE ĐÃ ĐƯỢC GỠ CÀI ĐẶT                              ║${NC}"
+    echo -e "${GREEN}║              ✅ NODE ĐÃ GỠ CÀI ĐẶT THÀNH CÔNG                       ║${NC}"
 fi
 echo -e "${GREEN}╠══════════════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║                                                                      ║${NC}"
+echo -e "${GREEN}║${NC}"
 echo -e "${GREEN}║${NC}  Đã gỡ bỏ:"
-echo -e "${GREEN}║${NC}    - Zero Trust Agent service"
-echo -e "${GREEN}║${NC}    - WireGuard configuration"
-echo -e "${GREEN}║${NC}    - Firewall rules (ZT_ACL)"
-if [ "$KEEP_KEYS" = "true" ]; then
-    echo -e "${GREEN}║${NC}    - (Giữ lại WireGuard keys)"
-fi
+echo -e "${GREEN}║${NC}  ├─ WireGuard (wg0)"
+echo -e "${GREEN}║${NC}  ├─ Zero Trust Agent"
+echo -e "${GREEN}║${NC}  ├─ ZT_ACL firewall chain"
+echo -e "${GREEN}║${NC}  └─ Config & log files"
+echo -e "${GREEN}║${NC}"
+echo -e "${GREEN}║${NC}  Backup: ${BACKUP_DIR:-N/A}"
 echo -e "${GREEN}║${NC}"
 echo -e "${GREEN}║${NC}  Để cài đặt lại:"
-echo -e "${GREEN}║${NC}    curl -sL .../scripts/node/install.sh | HUB_URL=... bash"
+echo -e "${GREEN}║${NC}  curl -sL .../scripts/node/install.sh | sudo HUB_URL=... ROLE=app bash"
 echo -e "${GREEN}║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
