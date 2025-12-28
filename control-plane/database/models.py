@@ -529,7 +529,7 @@ class User(Base):
                            comment="Auth provider: local, google, okta, etc.")
 
     # Status
-    status = Column(String(20), default="active", nullable=False, index=True,
+    status = Column(String(20), default="active", nullable=False,
                     comment="User status: active, suspended, disabled")
 
     # Metadata
